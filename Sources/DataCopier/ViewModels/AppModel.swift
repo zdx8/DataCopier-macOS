@@ -13,6 +13,8 @@ final class AppModel: ObservableObject {
     @Published var banner: BannerMessage?
     /// USB 设备挂载时待预填到新建任务表单的来源路径。
     @Published var pendingUSBSource: String?
+    /// USB 唤起时给新建任务表单顶部展示的说明（设备类型 + 卷名）。
+    @Published var pendingUSBHint: String?
     /// 是否在插入 USB 移动设备时自动弹出拷贝任务（设置页可开关）。
     @Published var usbDetectEnabled: Bool =
         UserDefaults.standard.object(forKey: AppModel.usbDetectKey) as? Bool ?? true {
@@ -84,11 +86,16 @@ final class AppModel: ObservableObject {
         guard removable || ejectable else { return }
 
         pendingUSBSource = url.path
+        let volumeName = (url.path as NSString).lastPathComponent
+        let capacity = Int64((try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?
+            .volumeTotalCapacity ?? 0)
+        let kind = USBDevice.kind(volumeName: volumeName, totalCapacity: capacity)
+        pendingUSBHint = "检测到\(kind)「\(volumeName)」已连接，已自动预填来源，选择目标文件夹即可开始拷贝"
         showNewTaskSheet = true
         MenuBarController.showMainWindow()
         banner = BannerMessage(kind: .info,
-                               text: "检测到 USB 移动设备",
-                               caption: "已预填来源：\((url.path as NSString).lastPathComponent)，请选择目标文件夹")
+                               text: "检测到\(kind)「\(volumeName)」",
+                               caption: "已自动打开新建拷贝任务并预填来源")
     }
 
     // MARK: - 查询
@@ -196,6 +203,15 @@ final class AppModel: ObservableObject {
                         finished.state = .failed
                     }
                     self.tasks[idx] = finished
+                }
+                // 任务结束后在 Finder 中打开目标文件夹：拷贝完成通常紧接着
+                // 就是查看/整理素材，直接把结果呈到眼前省一次手动寻找。
+                // 取消的任务不打扰；目标文件夹缺失时静默跳过。
+                if !report.cancelled {
+                    let destination = self.task(id: id)?.destination ?? ""
+                    if !destination.isEmpty {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: destination))
+                    }
                 }
                 let count = report.failures.count + report.mismatches.count + report.transcodeFailures.count
                 if report.cancelled {

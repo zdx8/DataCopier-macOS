@@ -2,16 +2,17 @@ import Foundation
 
 /// 依据拍摄时间与设备型号计算媒体文件在目标目录中的位置与名称。
 ///
-/// 归档结构为「类型目录 / 设备目录 / 日期目录 / 文件名」，每段都可独立关闭：
+/// 归档结构为「类型目录 / 日期目录 / 设备目录 / 文件名」，每段都可独立关闭：
+/// 设备目录由归档档位控制——带「/设备」的档位在日期层级之后再按机型分一层，
+/// 不带的则完全不出现机型目录：
 ///
 /// ```
-/// Photos/iPhone 15 Pro/2024/03/15/20240315_143022_IMG_1234.JPG
-/// Videos/ILCE-7M4/2024/03/15/20240315_143022_MVI_5678.MOV
+/// Photos/2024/03/03-15/iPhone 15 Pro/20240315_143022_IMG_1234.JPG
+/// Videos/2024/03/03-15/ILCE-7M4/20240315_143022_MVI_5678.MOV
 /// ```
 ///
-/// 设备型号紧贴类型目录之下而非日期之下：一次导入常混入多台设备的素材，
-/// 把机型放在最外层，可以让「整台设备的素材」成为一个可直接整体搬移、
-/// 备份或交付的单元；若放在日期之下，同一台设备的素材会被日期切碎。
+/// 设备目录放在日期之后而非类型之下：浏览某一天的素材时，同日各机型一目了然，
+/// 且不会把同一台设备的素材按日期切碎——两层信息都保留完整。
 ///
 /// 所有日期字段都通过 `Calendar` 取值后手工格式化，而非 `DateFormatter`：
 /// 后者不是线程安全的，而规划阶段会对成千上万个文件并发执行这段逻辑。
@@ -51,6 +52,15 @@ enum MediaArchiver {
                     .replacingOccurrences(of: "/", with: "-")
                     .replacingOccurrences(of: ":", with: "-")
                 base = prefix.isEmpty ? stamp : "\(prefix)_\(stamp)"
+            case .customWithOriginalAndTimestamp:
+                // 自定义字段 + 原文件名 + 时间戳：`婚礼_IMG_1234_20240315_143022.JPG`。
+                // 原名已含同一时间戳时不重复追加；字段为空回退到 原名_时间戳。
+                let prefix = settings.customRenamePrefix
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "/", with: "-")
+                    .replacingOccurrences(of: ":", with: "-")
+                let core = stem.contains(stamp) ? stem : "\(stem)_\(stamp)"
+                base = prefix.isEmpty ? core : "\(prefix)_\(core)"
             }
         } else {
             base = stem
@@ -71,15 +81,24 @@ enum MediaArchiver {
                              deviceModel: String? = nil,
                              calendar: Calendar = .current) -> String {
         var components: [String] = []
+        // 层级顺序：日期档位 → 类型目录（照片/视频）→ 设备目录。
+        // 日期在最外层，浏览某天素材时先进入日期，再按照片/视频分流，
+        // 同一天内同设备的照片与视频彼此相邻。
+        let custom = settings.folderSuffix
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        components.append(contentsOf: settings.folderGranularity.components(
+            for: captureDate,
+            calendar: calendar,
+            custom: custom.isEmpty ? "" : sanitize(custom)))
         if settings.separateByType {
             components.append(settings.folderName(for: kind))
         }
-        // 设备层级始终位于类型目录之下、日期之上（见类型文档说明）。
-        if let deviceModel, !deviceModel.isEmpty {
+        // 设备目录位于类型目录之后（如 年/月/月-日/照片/机型）。双重保险：
+        // 档位不带「/设备」时即使调用方传了机型也不追加（正常调用链中
+        // `deviceFolderName` 此时已返回 nil）；平铺档位没有设备变体。
+        if settings.folderGranularity.includesDevice, let deviceModel, !deviceModel.isEmpty {
             components.append(deviceModel)
         }
-        components.append(contentsOf: settings.folderGranularity.components(for: captureDate,
-                                                                           calendar: calendar))
         components.append(fileName)
         return components.joined(separator: "/")
     }

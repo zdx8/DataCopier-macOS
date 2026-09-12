@@ -78,8 +78,21 @@ struct TaskDetailView: View {
                         Button("按校验清单复核…") { model.verifyAgainstManifest(for: task.id) }
                     }
                 } label: {
-                    Label("导出", systemImage: "square.and.arrow.up")
+                    // 与主窗口「新建任务」按钮同一套样式：浅蓝底 + 深蓝字。
+                    // Menu 的 label 默认被系统接管（加箭头、套系统样式），
+                    // 需 borderlessButton + 隐藏菜单指示器才能保住自绘外观。
+                    Label("导出报告", systemImage: "square.and.arrow.up")
+                        .labelStyle(.titleAndIcon)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.blue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 7)
+                            .fill(Color.blue.opacity(0.16)))
                 }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
                 .disabled(task.lastReport == nil)
                 .help("导出统计报告")
             }

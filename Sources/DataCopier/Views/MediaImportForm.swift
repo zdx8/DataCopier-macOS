@@ -24,12 +24,6 @@ struct CopyPresetPicker: View {
                 }
             }
             .padding(.vertical, 2)
-
-            if options.copyPreset == .media {
-                Text("目标目录按拍摄时间重建，来源原有的目录结构不再保留。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -82,6 +76,11 @@ struct CopyPresetPicker: View {
 /// 媒体预设的归档配置。
 struct MediaImportForm: View {
     @Binding var settings: MediaImportSettings
+    /// 路径预览使用的设备目录名。三种取值：
+    /// nil 使用固定样例机型（设置页等无真实设备的场景）；
+    /// 空串不显示设备目录（来源区设备名留空 = 不按设备分层）；
+    /// 非空使用传入的设备名（新建任务时扫描/手填的结果）。
+    var previewDeviceName: String? = nil
 
     var body: some View {
         Section("归档选项") {
@@ -97,9 +96,10 @@ struct MediaImportForm: View {
                         Text(mode.displayName).tag(mode)
                     }
                 }
-                if settings.renameMode == .customWithTimestamp {
-                    TextField("自定义字段", text: $settings.customRenamePrefix, prompt: Text("例如：婚礼、旅行"))
-                    Text("自定义字段会作为前缀拼在拍摄时间之前，留空则只保留时间戳。")
+                if settings.renameMode == .customWithTimestamp
+                    || settings.renameMode == .customWithOriginalAndTimestamp {
+                    TextField("自定义字段", text: $settings.customRenamePrefix, prompt: Text("默认为空，例如：婚礼、旅行"))
+                    Text("自定义字段会作为前缀拼在文件名最前面，留空则只保留后面的部分。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -115,6 +115,12 @@ struct MediaImportForm: View {
                     Text(granularity.displayName).tag(granularity)
                 }
             }
+
+            // 归档目录的自定义子目录：拼进「月-日」叶子目录名，默认为空仅保留月-日。
+            TextField("自定义子目录", text: $settings.folderSuffix, prompt: Text("默认为空，例如：婚礼、旅行"))
+            Text("自定义子目录会以连字符拼接在「月-日」文件夹名之后，如 03-15-婚礼；留空则仅保留月-日。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             // 归档规则有六七个开关，逐条列举示例路径比任何文字都直观。
             VStack(alignment: .leading, spacing: 3) {
@@ -137,15 +143,27 @@ struct MediaImportForm: View {
     }
 
     /// 命名示例。自定义字段方式下用当前填写的字段拼出真实示例，
-    /// 让用户在落盘前就能看到最终的文件名样子。
+    /// 让用户在落盘前就能看到最终的文件名样子。时间戳统一用今天，
+    /// 与即将导入的素材时间更为接近。
     private var exampleName: String {
-        guard settings.renameMode == .customWithTimestamp, let date = Self.sampleDate else {
+        let usesCustom = settings.renameMode == .customWithTimestamp
+            || settings.renameMode == .customWithOriginalAndTimestamp
+        guard usesCustom else {
             return settings.renameMode.example
         }
         let prefix = settings.customRenamePrefix
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let stamp = MediaArchiver.timestamp(date)
-        return prefix.isEmpty ? "\(stamp).JPG" : "\(prefix)_\(stamp).JPG"
+        let stamp = MediaArchiver.timestamp(Date())
+        switch settings.renameMode {
+        case .customWithTimestamp:
+            return prefix.isEmpty ? "\(stamp).JPG" : "\(prefix)_\(stamp).JPG"
+        case .customWithOriginalAndTimestamp:
+            let original = "IMG_1234"
+            let core = "\(original)_\(stamp)"
+            return prefix.isEmpty ? "\(core).JPG" : "\(prefix)_\(core).JPG"
+        default:
+            return settings.renameMode.example
+        }
     }
 
     /// 归档路径预览。
@@ -154,23 +172,30 @@ struct MediaImportForm: View {
     /// 配置项有六七个且互相影响，任何一处手写示例都可能与真实落盘位置不一致，
     /// 而这种不一致只有在拷贝完成后才会被发现。
     private func previewPath(for kind: MediaKind) -> String {
-        guard let date = Self.sampleDate else { return "—" }
+        // 预览统一用今天的日期：马上要导入的素材大概率就是今天拍的，
+        // 固定样例日期反而容易让人误以为归档目录被写死了。
+        let date = Date()
         let original = kind == .photo ? "IMG_1234.JPG" : "MVI_5678.MOV"
         let fileName = MediaArchiver.fileName(originalName: original,
                                               captureDate: date,
                                               settings: settings)
-        // 预览用的机型是固定样例：这里要说明的是目录层级，
-        // 而不是任何一份具体素材的真实机型。
-        let device = settings.classifyByDevice ? "iPhone 15 Pro" : nil
+        // 设备名三态：档位不带设备时无所谓；带设备时优先用来源区识别/
+        // 手填的设备名，留空则预览中也不出现设备目录；未传参的场景
+        // （设置页等）退回固定样例机型。
+        let device: String?
+        if !settings.folderGranularity.includesDevice {
+            device = nil
+        } else if let previewDeviceName {
+            device = previewDeviceName.isEmpty ? nil : previewDeviceName
+        } else {
+            device = "iPhone 15 Pro"
+        }
         return MediaArchiver.relativePath(kind: kind,
                                           captureDate: date,
                                           fileName: fileName,
                                           settings: settings,
-                                          deviceModel: settings.classifyByDevice ? device : nil)
+                                          deviceModel: device)
     }
-
-    private static let sampleDate = MediaMetadata.makeLocalDate(year: 2024, month: 3, day: 15,
-                                                                hour: 14, minute: 30, second: 22)
 }
 
 // MARK: - 可选细化与格式说明
@@ -192,14 +217,13 @@ struct MediaExtrasForm: View {
 
                 Divider()
 
-                Toggle("按拍摄设备型号分类", isOn: $settings.classifyByDevice)
-                Text("从照片 EXIF 与视频容器中读取机型，在照片 / 视频目录下再建一层机型目录，"
-                     + "便于按设备整体搬移或交付素材。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if settings.folderGranularity.includesDevice {
+                    Text("设备档位会从照片 EXIF 与视频容器中读取机型，在类型目录之后"
+                         + "（如 2024/03/03-15/Photos/机型）再按设备分一层目录。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                if settings.classifyByDevice {
                     TextField("未识别设备的目录名",
                               text: $settings.unknownDeviceFolderName,
                               prompt: Text("未知设备"))
@@ -208,8 +232,6 @@ struct MediaExtrasForm: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Divider()
 
                 Picker("视频时间解释", selection: $settings.videoTimeZone) {
                     ForEach(VideoTimeZoneMode.allCases) { mode in

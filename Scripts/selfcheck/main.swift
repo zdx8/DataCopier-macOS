@@ -1231,37 +1231,106 @@ func checkCopyPresets() {
     let sanitizedCustom = MediaArchiver.fileName(originalName: "IMG_1234.JPG", captureDate: sampleDate, settings: settings)
     expect(sanitizedCustom == "a-b-c_20240315_143022.JPG", "自定义字段中的非法字符被替换", detail: sanitizedCustom)
 
+    settings.renameMode = .customWithOriginalAndTimestamp
+    settings.customRenamePrefix = "婚礼"
+    let customOriginalStamp = MediaArchiver.fileName(originalName: "IMG_1234.JPG",
+                                                     captureDate: sampleDate, settings: settings)
+    expect(customOriginalStamp == "婚礼_IMG_1234_20240315_143022.JPG",
+           "重命名：自定义字段 + 原文件名 + 拍摄时间", detail: customOriginalStamp)
+    settings.customRenamePrefix = ""
+    let blankPrefixOriginal = MediaArchiver.fileName(originalName: "IMG_1234.JPG",
+                                                     captureDate: sampleDate, settings: settings)
+    expect(blankPrefixOriginal == "IMG_1234_20240315_143022.JPG",
+           "自定义 + 原名 + 时间：字段空白时回退到 原名_时间戳", detail: blankPrefixOriginal)
+    let preStampedOriginal = MediaArchiver.fileName(originalName: "IMG_20240315_143022.jpg",
+                                                    captureDate: sampleDate, settings: settings)
+    expect(preStampedOriginal == "IMG_20240315_143022.jpg",
+           "自定义 + 原名 + 时间：原名已含时间戳时不重复追加", detail: preStampedOriginal)
+
     settings.renameByCaptureTime = false
     let kept = MediaArchiver.fileName(originalName: "IMG_1234.JPG", captureDate: sampleDate, settings: settings)
     expect(kept == "IMG_1234.JPG", "关闭重命名后保留原文件名", detail: kept)
 
     expect(MediaArchiver.sanitize("a:b/c\\d") == "a-b-c-d", "文件名中的冒号与斜杠被替换")
 
-    // ---- 归档路径 ----
+    // ---- 归档路径（七档：年/月/月-日-自定义[/设备]、年/月-日-自定义[/设备]、
+    //      月-日-自定义[/设备]、不归类） ----
     settings = MediaImportSettings()
+    expect(settings.folderGranularity == .yearMonthDayDevice, "默认档位为 年/月/月-日-自定义/设备")
     let deepPath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                               fileName: "x.jpg", settings: settings)
-    expect(deepPath == "Photos/2024/03/15/x.jpg", "归档路径：类型 / 年 / 月 / 日", detail: deepPath)
+    expect(deepPath == "2024/03/03-15/Photos/x.jpg", "归档路径：年/月/月-日（自定义留空，未传机型）", detail: deepPath)
 
-    settings.folderGranularity = .yearMonth
-    let monthPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
-                                               fileName: "x.mp4", settings: settings)
-    expect(monthPath == "Videos/2024/03/x.mp4", "归档路径：按年月", detail: monthPath)
+    settings.folderGranularity = .yearMonthDayDevice
+    let deviceDeepPath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
+                                                    fileName: "x.jpg", settings: settings,
+                                                    deviceModel: "iPhone 15 Pro")
+    expect(deviceDeepPath == "2024/03/03-15/Photos/iPhone 15 Pro/x.jpg",
+           "归档路径：年/月/月-日/设备", detail: deviceDeepPath)
 
-    settings.folderGranularity = .year
-    let yearPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
-                                              fileName: "x.mp4", settings: settings)
-    expect(yearPath == "Videos/2024/x.mp4", "归档路径：按年", detail: yearPath)
+    settings.folderGranularity = .yearMonthDayFlatDevice
+    let deviceFlatYearPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
+                                                        fileName: "x.mp4", settings: settings,
+                                                        deviceModel: "ILCE-7M4")
+    expect(deviceFlatYearPath == "2024/03-15/Videos/ILCE-7M4/x.mp4",
+           "归档路径：年/月-日/设备", detail: deviceFlatYearPath)
 
-    settings.folderGranularity = .month
-    let monthOnlyPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
-                                                   fileName: "x.mp4", settings: settings)
-    expect(monthOnlyPath == "Videos/03/x.mp4", "归档路径：按月（不带年份）", detail: monthOnlyPath)
+    settings.folderGranularity = .monthDayFlatDevice
+    let deviceMonthDayPath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
+                                                        fileName: "x.jpg", settings: settings,
+                                                        deviceModel: "iPhone 15 Pro")
+    expect(deviceMonthDayPath == "03-15/Photos/iPhone 15 Pro/x.jpg",
+           "归档路径：月-日/设备（不带年份）", detail: deviceMonthDayPath)
 
-    settings.folderGranularity = .monthDay
+    // 非设备档位即使调用方传入机型也不会追加设备目录
+    settings.folderGranularity = .yearMonthDay
+    let gatedDevicePath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
+                                                     fileName: "x.jpg", settings: settings,
+                                                     deviceModel: "iPhone 15 Pro")
+    expect(gatedDevicePath == "2024/03/03-15/Photos/x.jpg",
+           "非设备档位不追加设备目录", detail: gatedDevicePath)
+    expect(MediaFolderGranularity.yearMonthDay.withDevice == .yearMonthDayDevice,
+           "年/月/月-日档位可升级为带设备变体")
+    expect(MediaFolderGranularity.none.withDevice == nil, "不归类档位没有设备变体")
+    expect(MediaFolderGranularity.yearMonthDayDevice.withoutDevice == .yearMonthDay,
+           "带设备档位可降级为不带设备变体")
+    expect(MediaFolderGranularity.monthDayFlat.withoutDevice == .monthDayFlat,
+           "不带设备档位降级后保持不变")
+    expect(CopyPreset.media.summary.contains("来源原有的目录结构不再保留"),
+           "媒体预设简介说明目录重建行为")
+
+    settings.folderGranularity = .yearMonthDayFlat
+    let flatYearPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
+                                                  fileName: "x.mp4", settings: settings)
+    expect(flatYearPath == "2024/03-15/Videos/x.mp4", "归档路径：年/月-日", detail: flatYearPath)
+
+    settings.folderGranularity = .monthDayFlat
     let monthDayPath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                                   fileName: "x.jpg", settings: settings)
-    expect(monthDayPath == "Photos/03/15/x.jpg", "归档路径：按月 / 日（不带年份）", detail: monthDayPath)
+    expect(monthDayPath == "03-15/Photos/x.jpg", "归档路径：月-日（不带年份）", detail: monthDayPath)
+
+    // 自定义字段拼进叶子目录名：婚礼 → 03-15-婚礼；分隔符被净化
+    settings.folderSuffix = "婚礼"
+    settings.folderGranularity = .yearMonthDay
+    let suffixPath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
+                                                fileName: "x.jpg", settings: settings)
+    expect(suffixPath == "2024/03/03-15-婚礼/Photos/x.jpg", "归档路径：自定义字段拼接月-日叶子目录", detail: suffixPath)
+    settings.folderSuffix = "  旅/行  "
+    let sanitizedSuffixPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
+                                                         fileName: "x.mp4", settings: settings)
+    expect(sanitizedSuffixPath == "2024/03/03-15-旅-行/Videos/x.mp4",
+           "归档路径：自定义字段中的分隔符被净化",
+           detail: sanitizedSuffixPath)
+    settings.folderGranularity = .monthDayFlat
+    let flatCustomPath = MediaArchiver.relativePath(kind: .video, captureDate: sampleDate,
+                                                    fileName: "x.mp4", settings: settings)
+    expect(flatCustomPath == "03-15-旅-行/Videos/x.mp4", "归档路径：月-日-自定义档位", detail: flatCustomPath)
+    settings.folderSuffix = ""
+
+    // 旧版本档位解码映射：year/yearMonth → 年/月-日，month/monthDay → 月-日
+    expect(MediaFolderGranularity(fromLegacyRaw: "year") == .yearMonthDayFlat, "旧档位 year 映射到 年/月-日")
+    expect(MediaFolderGranularity(fromLegacyRaw: "yearMonthDay") == .yearMonthDay, "旧档位 yearMonthDay 保持不变")
+    expect(MediaFolderGranularity(fromLegacyRaw: "monthDay") == .monthDayFlat, "旧档位 monthDay 映射到 月-日")
 
     settings.folderGranularity = .none
     settings.separateByType = false
@@ -1385,9 +1454,9 @@ func checkCopyPresets() {
            detail: noModelRead.deviceModel ?? "nil")
 
     if modelVideoCreated, let probeURL = FFmpegLocator.locateProbe() {
-        // 关掉设备分类时不应为 ISO BMFF 视频额外起 ffprobe，机型取自字节解析。
+        // 档位不带设备时不应为 ISO BMFF 视频额外起 ffprobe，机型取自字节解析。
         var noDeviceSettings = MediaImportSettings()
-        noDeviceSettings.classifyByDevice = false
+        noDeviceSettings.folderGranularity = .yearMonthDay
         let byteRead = MediaMetadata.read(forPath: videos.appendingPathComponent("phone.mov").path,
                                           kind: .video,
                                           settings: noDeviceSettings,
@@ -1434,38 +1503,83 @@ func checkCopyPresets() {
     deviceSettings.unknownDeviceFolderName = ""
     expect(deviceSettings.deviceFolderName(for: nil) == "未知设备",
            "未识别目录名为空时回退到默认值")
-    deviceSettings.classifyByDevice = false
+    deviceSettings.folderGranularity = .monthDayFlat
     expect(deviceSettings.deviceFolderName(for: "iPhone 15 Pro") == nil,
-           "关闭设备分类后不产生设备层级")
+           "档位不带设备后不产生设备层级")
+
+    // ---- 按来源的自定义设备目录名 ----
+    var perSourceSettings = MediaImportSettings()
+    expect(perSourceSettings.sourceDeviceNames.isEmpty, "来源设备名映射默认为空")
+    expect(perSourceSettings.sourceDeviceFolderName(for: "/Volumes/A") == nil,
+           "未填写设备名的来源回落到未知设备目录")
+    perSourceSettings.sourceDeviceNames = ["/Volumes/A": "婚礼主机位",
+                                           "/Volumes/B": "  副机位  "]
+    expect(perSourceSettings.sourceDeviceFolderName(for: "/Volumes/A") == "婚礼主机位",
+           "来源 A 的设备名生效")
+    expect(perSourceSettings.sourceDeviceFolderName(for: "/Volumes/B") == "副机位",
+           "来源 B 的设备名去除空白后生效")
+    expect(perSourceSettings.sourceDeviceFolderName(for: "/Volumes/C") == nil,
+           "不在映射中的来源回落到未知设备目录")
+    expect(perSourceSettings.sourceDeviceFolderName(for: nil) == nil,
+           "来源路径缺失时不产生自定义设备目录")
+    // 编码往返：映射写入任务文件后可原样读回。
+    do {
+        let encoded = try JSONEncoder().encode(perSourceSettings)
+        let decoded = try JSONDecoder().decode(MediaImportSettings.self, from: encoded)
+        expect(decoded.sourceDeviceNames == perSourceSettings.sourceDeviceNames,
+               "来源设备名映射可编码往返")
+    } catch {
+        expect(false, "来源设备名映射可编码往返", detail: error.localizedDescription)
+    }
 
     // ---- 归档路径中的设备层级 ----
     var pathSettings = MediaImportSettings()
+    expect(pathSettings.folderGranularity.includesDevice, "默认档位包含设备层级")
     let devicePath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                                 fileName: "x.jpg", settings: pathSettings,
                                                 deviceModel: "iPhone 15 Pro")
-    expect(devicePath == "Photos/iPhone 15 Pro/2024/03/15/x.jpg",
-           "归档路径：类型 / 设备 / 年 / 月 / 日", detail: devicePath)
+    expect(devicePath == "2024/03/03-15/Photos/iPhone 15 Pro/x.jpg",
+           "归档路径：类型 / 年 / 月 / 月-日 / 设备", detail: devicePath)
 
     pathSettings.separateByType = false
     let noTypePath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                                 fileName: "x.jpg", settings: pathSettings,
                                                 deviceModel: "ILCE-7M4")
-    expect(noTypePath == "ILCE-7M4/2024/03/15/x.jpg",
-           "关闭类型分类后设备成为顶层目录", detail: noTypePath)
+    expect(noTypePath == "2024/03/03-15/ILCE-7M4/x.jpg",
+           "关闭类型分类后日期成为顶层目录", detail: noTypePath)
 
     pathSettings.separateByType = true
     pathSettings.folderGranularity = .none
     let flatDevicePath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                                     fileName: "x.jpg", settings: pathSettings,
                                                     deviceModel: "iPhone 15 Pro")
-    expect(flatDevicePath == "Photos/iPhone 15 Pro/x.jpg",
-           "日期层级关闭后设备目录仍在", detail: flatDevicePath)
+    expect(flatDevicePath == "Photos/x.jpg",
+           "不归类档位即使传入机型也不追加设备目录", detail: flatDevicePath)
 
     pathSettings = MediaImportSettings()
     let noDevicePath = MediaArchiver.relativePath(kind: .photo, captureDate: sampleDate,
                                                   fileName: "x.jpg", settings: pathSettings)
-    expect(noDevicePath == "Photos/2024/03/15/x.jpg",
+    expect(noDevicePath == "2024/03/03-15/Photos/x.jpg",
            "不传机型时退回原有路径结构", detail: noDevicePath)
+
+    // ---- 旧任务文件迁移：classifyByDevice 开关并入档位 ----
+    do {
+        struct MediaBox: Codable { var media: MediaImportSettings }
+        let legacyOn = try? JSONDecoder().decode(MediaBox.self, from: Data(
+            #"{"media":{"classifyByDevice":true,"folderGranularity":"yearMonthDay"}}"#.utf8))
+        expect(legacyOn?.media.folderGranularity == .yearMonthDayDevice,
+               "旧配置开启设备分类时迁移到带设备档位",
+               detail: legacyOn?.media.folderGranularity.rawValue ?? "nil")
+        let legacyOff = try? JSONDecoder().decode(MediaBox.self, from: Data(
+            #"{"media":{"classifyByDevice":false,"folderGranularity":"yearMonthDay"}}"#.utf8))
+        expect(legacyOff?.media.folderGranularity == .yearMonthDay,
+               "旧配置关闭设备分类时档位保持不变",
+               detail: legacyOff?.media.folderGranularity.rawValue ?? "nil")
+        let legacyNoKey = try? JSONDecoder().decode(MediaBox.self, from: Data(
+            #"{"media":{}}"#.utf8))
+        expect(legacyNoKey?.media.folderGranularity == .yearMonthDayDevice,
+               "缺失档位字段时回退默认档位（含设备）")
+    }
 
     // ---- 容器 ©mod 字节解析 ----
     func quickTimeBytes(_ model: String) -> [UInt8] {
@@ -1612,24 +1726,24 @@ func checkCopyPresets() {
         fm.fileExists(atPath: mediaRoot.appendingPathComponent(relative).path)
     }
 
-    expect(exists("Photos/iPhone 15 Pro/2024/03/15/20240315_143022_a.jpg"),
-           "机型目录 + EXIF 时间驱动目录与命名（a.jpg）")
-    expect(exists("Photos/iPhone 15 Pro/2024/03/15/20240315_143022_a.jpg")
-           && exists("Photos/iPhone 15 Pro/2024/03/15/20240315_143022_a_2.jpg"),
+    expect(exists("2024/03/03-15/Photos/iPhone 15 Pro/20240315_143022_a.jpg"),
+           "设备目录在日期层级之后 + EXIF 时间驱动目录与命名（a.jpg）")
+    expect(exists("2024/03/03-15/Photos/iPhone 15 Pro/20240315_143022_a.jpg")
+           && exists("2024/03/03-15/Photos/iPhone 15 Pro/20240315_143022_a_2.jpg"),
            "同一秒的同名同机型文件自动加序号而非互相覆盖")
-    expect(exists("Photos/ILCE-7M4/2024/03/15/20240315_143022_IMG_9999.JPG"),
+    expect(exists("2024/03/03-15/Photos/ILCE-7M4/20240315_143022_IMG_9999.JPG"),
            "同一秒的不同机型分入各自目录，无需加序号")
-    expect(exists("Photos/未知设备/2023/06/01/IMG_20230601_101112.png"),
+    expect(exists("2023/06/06-01/Photos/未知设备/IMG_20230601_101112.png"),
            "未识别机型归入未知设备目录，文件名时间戳回退到对应日期")
     expect(!exists("Photos/README.txt") && !exists("README.txt") && !exists("source/photos/README.txt"),
            "非媒体文件未出现在目标目录任何位置")
 
     if videoCreated {
-        expect(exists("Videos/未知设备/2024/05/20/20240520_081530_clip.mp4"),
+        expect(exists("2024/05/05-20/Videos/未知设备/20240520_081530_clip.mp4"),
                "无机型的视频按容器时间归档到未识别设备目录")
     }
     if modelVideoCreated {
-        expect(exists("Videos/iPhone 15 Pro/2024/05/20/20240520_081530_phone.mov"),
+        expect(exists("2024/05/05-20/Videos/iPhone 15 Pro/20240520_081530_phone.mov"),
                "带 ©mod 的 MOV 归入机型目录")
     }
 
@@ -1643,6 +1757,39 @@ func checkCopyPresets() {
     expect(report.deviceCounts == expectedDevices, "设备分布统计与预期一致",
            detail: report.deviceRanking.map { "\($0.device):\($0.count)" }.joined(separator: " "))
     expect(report.classifiedByDevice, "报告标记为已按设备分类")
+
+    // ---- 按来源自定义设备名：两张卡各自的无机型素材各归其位 ----
+    let cardA = sandbox.appendingPathComponent("cardA")
+    let cardB = sandbox.appendingPathComponent("cardB")
+    try? fm.createDirectory(at: cardA.appendingPathComponent("DCIM/100EOS"),
+                            withIntermediateDirectories: true)
+    try? fm.createDirectory(at: cardB, withIntermediateDirectories: true)
+    let cardAOK = makePhotoWithEXIF(cardA.appendingPathComponent("DCIM/100EOS/IMG_A01.JPG").path,
+                                    exifDate: nil)
+    let cardBOK = makePhotoWithEXIF(cardB.appendingPathComponent("IMG_B01.jpg").path,
+                                    exifDate: nil)
+    if cardAOK && cardBOK {
+        var perSourceOptions = TaskOptions.default
+        perSourceOptions.copyPreset = .media
+        perSourceOptions.mediaSettings.sourceDeviceNames = [cardA.path: "主机位",
+                                                            cardB.path: "副机位"]
+        let perSourceTask = CopyTask(name: "按来源设备名",
+                                     sources: [cardA.path, cardB.path],
+                                     destination: destination.path,
+                                     options: perSourceOptions)
+        if let perSourceReport = runTaskSync(perSourceTask) {
+            expect(perSourceReport.copiedFiles == 2, "按来源设备名任务拷贝 2 个文件",
+                   detail: "\(perSourceReport.copiedFiles)")
+            expect(perSourceReport.deviceCounts == ["主机位": 1, "副机位": 1],
+                   "无机型素材按各自来源填写的设备名归档",
+                   detail: perSourceReport.deviceRanking
+                       .map { "\($0.device):\($0.count)" }.joined(separator: " "))
+        } else {
+            expect(false, "按来源设备名任务执行完成")
+        }
+    } else {
+        expect(false, "按来源设备名：测试照片生成成功")
+    }
     expect(report.deviceCounts.values.reduce(0, +) == report.copiedFiles,
            "设备分布之和等于归档文件数")
 
@@ -1871,6 +2018,61 @@ func checkCopyPresets() {
                detail: restored?.customRenamePrefix ?? "nil")
     }
 
+    // ---- USB 设备类型推断：卷名关键词优先，其次按容量分档 ----
+    expect(USBDevice.kind(volumeName: "EOS_DIGITAL", totalCapacity: 64 * 1024 * 1024 * 1024)
+           == "相机存储卡", "USB 类型：相机卡卷名命中")
+    expect(USBDevice.kind(volumeName: "BackupDisk", totalCapacity: 1 * 1024 * 1024 * 1024 * 1024)
+           == "移动硬盘", "USB 类型：大容量判移动硬盘",
+           detail: USBDevice.kind(volumeName: "BackupDisk", totalCapacity: 1 * 1024 * 1024 * 1024 * 1024))
+    expect(USBDevice.kind(volumeName: "UNTITLED", totalCapacity: 32 * 1024 * 1024 * 1024)
+           == "U盘", "USB 类型：小容量无名卷判 U 盘",
+           detail: USBDevice.kind(volumeName: "UNTITLED", totalCapacity: 32 * 1024 * 1024 * 1024))
+
+    // ---- USB 设备名扫描：插入设备后从卡内媒体文件读取型号 ----
+    do {
+        let scanRoot = sandbox.appendingPathComponent("usbdev")
+        try? fm.createDirectory(at: scanRoot.appendingPathComponent("DCIM/100CANON"),
+                                withIntermediateDirectories: true)
+        // 深层目录里的一张带机型 EXIF 的照片即可确定设备身份
+        expect(makePhotoWithEXIF(scanRoot.appendingPathComponent("DCIM/100CANON/IMG_0001.jpg").path,
+                                 exifDate: "2024:03:15 14:30:22",
+                                 model: "Canon EOS R5"),
+               "生成带机型的扫描样本照片")
+        expect(USBDeviceScanner.detectDeviceModel(at: scanRoot.path) == "Canon EOS R5",
+               "USB 扫描：从深层目录照片读出设备型号",
+               detail: USBDeviceScanner.detectDeviceModel(at: scanRoot.path) ?? "nil")
+
+        // 只有无机型的文件时视为未知设备
+        let blankRoot = sandbox.appendingPathComponent("usbdev-blank")
+        try? fm.createDirectory(at: blankRoot, withIntermediateDirectories: true)
+        expect(makePhotoWithEXIF(blankRoot.appendingPathComponent("IMG_0002.jpg").path,
+                                 exifDate: "2024:03:15 14:30:22"),
+               "生成无机型的扫描样本照片")
+        expect(USBDeviceScanner.detectDeviceModel(at: blankRoot.path) == nil,
+               "USB 扫描：无机型文件时返回 nil（未知设备）")
+
+        // 空卷与非媒体文件也不该误报
+        let emptyRoot = sandbox.appendingPathComponent("usbdev-empty")
+        try? fm.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
+        try? "note".write(to: emptyRoot.appendingPathComponent("note.txt"), atomically: true,
+                          encoding: .utf8)
+        expect(USBDeviceScanner.detectDeviceModel(at: emptyRoot.path) == nil,
+               "USB 扫描：空卷与非媒体文件不误报")
+        expect(USBDeviceScanner.detectDeviceModel(at: "/nonexistent-volume-xyz") == nil,
+               "USB 扫描：来源不存在时返回 nil")
+    }
+
+    // ---- USB 设备枚举：不依赖机器上是否真插了设备，只验证结果合法 ----
+    do {
+        let hits = USBDeviceScanner.detectUSBDevices()
+        expect(hits.allSatisfy { $0.volumePath != "/" && !$0.volumePath.isEmpty },
+               "USB 枚举：不把根目录与空路径当作 USB 设备",
+               detail: hits.map(\.volumePath).joined(separator: ", "))
+        expect(hits.allSatisfy { hit in
+            hit.deviceModel.map { !$0.isEmpty } ?? true
+        }, "USB 枚举：识别出的型号不为空串")
+    }
+
     // ---- 回归：所有文件拷贝不受影响 ----
     let plainDestination = sandbox.appendingPathComponent("plain")
     try? fm.createDirectory(at: plainDestination, withIntermediateDirectories: true)
@@ -1926,8 +2128,8 @@ func checkCopyPresets() {
 
         // 同一秒但不同机型：设备目录不同，因此两边都应保留无序号的文件名。
         // 这正是设备分层顺带解决的撞名问题。
-        expect(paths.contains("Photos/iPhone 15 Pro/2024/03/15/20240315_143022.jpg")
-               && paths.contains("Photos/ILCE-7M4/2024/03/15/20240315_143022.JPG"),
+        expect(paths.contains("2024/03/03-15/Photos/iPhone 15 Pro/20240315_143022.jpg")
+               && paths.contains("2024/03/03-15/Photos/ILCE-7M4/20240315_143022.JPG"),
                "不同机型的同秒素材各自落在机型目录下且不加序号",
                detail: paths.sorted().joined(separator: "、"))
     } else {
@@ -1993,9 +2195,9 @@ func checkCopyPresets() {
         expect(false, "严格时间任务执行完成")
     }
 
-    // ---- 关闭设备分类：应退回「类型 / 日期」结构 ----
+    // ---- 档位不带设备：应退回「类型 / 日期」结构 ----
     var noDeviceSettings = MediaImportSettings()
-    noDeviceSettings.classifyByDevice = false
+    noDeviceSettings.folderGranularity = .yearMonthDay
 
     var noDeviceOptions = TaskOptions.default
     noDeviceOptions.copyPreset = .media
@@ -2014,17 +2216,28 @@ func checkCopyPresets() {
         expect(noDeviceReport.deviceCounts.isEmpty, "关闭设备分类后设备统计为空",
                detail: "\(noDeviceReport.deviceCounts)")
 
-        // 直接看目录：关了分类之后 Photos 下只应剩年份层，不该出现任何机型目录。
-        let photoRoot = noDeviceDestination.appendingPathComponent("Photos")
-        let topLevel = (try? fm.contentsOfDirectory(atPath: photoRoot.path))?.sorted() ?? []
-        expect(topLevel == ["2023", "2024"], "关闭设备分类后 Photos 下只有年份目录",
-               detail: topLevel.joined(separator: "、"))
+        // 直接看目录：顶层只剩日期层与校验清单；类型目录位于月-日之下、
+        // 直接存放文件。IMG_20230601 的时间来自文件名（2023 年），在另一棵日期树下。
+        let destTopLevel = (try? fm.contentsOfDirectory(
+            atPath: noDeviceDestination.path))?.sorted() ?? []
+        expect(destTopLevel == ["2023", "2024", "不按设备分类.checksums.txt"],
+               "关闭设备分类后目标顶层只有年份目录与校验清单",
+               detail: destTopLevel.joined(separator: "、"))
+        let photoRoot = noDeviceDestination.appendingPathComponent("2024/03/03-15/Photos")
+        let photoLevel = (try? fm.contentsOfDirectory(atPath: photoRoot.path))?.sorted() ?? []
+        expect(photoLevel == ["20240315_143022_IMG_9999.JPG", "20240315_143022_a.jpg",
+                              "20240315_143022_a_2.jpg"],
+               "关闭设备分类后 Photos 目录直接存放文件",
+               detail: photoLevel.joined(separator: "、"))
+        expect(fm.fileExists(atPath: noDeviceDestination
+                .appendingPathComponent("2023/06/06-01/Photos/IMG_20230601_101112.png").path),
+               "无机型照片按文件名日期归入对应年份的类型目录")
 
         expect(fm.fileExists(atPath: noDeviceDestination
-                .appendingPathComponent("Photos/2024/03/15/20240315_143022_a.jpg").path),
-               "关闭设备分类后回到「类型 / 年 / 月 / 日」路径")
+                .appendingPathComponent("2024/03/03-15/Photos/20240315_143022_a.jpg").path),
+               "关闭设备分类后回到「年 / 月 / 月-日 / 类型」路径")
         expect(fm.fileExists(atPath: noDeviceDestination
-                .appendingPathComponent("Photos/2024/03/15/20240315_143022_a_2.jpg").path),
+                .appendingPathComponent("2024/03/03-15/Photos/20240315_143022_a_2.jpg").path),
                "关闭设备分类后同秒同名仍需序号区分")
     } else {
         expect(false, "不按设备分类的任务执行完成")

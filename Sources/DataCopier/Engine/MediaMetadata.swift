@@ -129,7 +129,7 @@ enum MediaMetadata {
             let isISO = MediaFileTypes.isoBmffExtensions.contains(ext)
 
             // 需要 ffprobe 的两种情形：非 ISO BMFF 容器必须靠它取时间；
-            // ISO BMFF 容器则在「启用了设备分类但字节里没有型号」时补一次查询。
+            // ISO BMFF 容器则在「档位带设备但字节里没有型号」时补一次查询。
             if isISO {
                 let info = isoBmffInfo(atPath: path, mode: settings.videoTimeZone)
                 if let date = info.date {
@@ -138,7 +138,7 @@ enum MediaMetadata {
                 result.deviceModel = info.model
             }
 
-            let needsProbe = !isISO || (result.deviceModel == nil && settings.classifyByDevice)
+            let needsProbe = !isISO || (result.deviceModel == nil && settings.folderGranularity.includesDevice)
             if needsProbe, let probe {
                 let info = probeInfo(atPath: path, probe: probe, mode: settings.videoTimeZone)
                 if result.capture.date == nil, let date = info.date {

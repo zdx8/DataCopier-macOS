@@ -100,7 +100,7 @@ enum CopyPreset: String, CaseIterable, Identifiable, Codable, Sendable {
         case .everything:
             return "完整拷贝来源目录，保留原始目录层级，全部文件类型，文件名不改动，适合整盘项目迁移。"
         case .media:
-            return "照片视频，适合相机卡导入素材整理，支持主流照片视频格式。"
+            return "照片视频，适合相机卡导入素材整理，目标目录按拍摄时间重建，来源原有的目录结构不再保留。"
         }
     }
 
@@ -203,6 +203,8 @@ enum MediaRenameMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case timestampOnly
     /// 自定义字段 + 拍摄时间，例如「婚礼_20240315_143022.JPG」
     case customWithTimestamp
+    /// 自定义字段 + 原文件名 + 拍摄时间，例如「婚礼_IMG_1234_20240315_143022.JPG」
+    case customWithOriginalAndTimestamp
 
     var id: String { rawValue }
 
@@ -211,6 +213,7 @@ enum MediaRenameMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .timestampWithOriginal: return "时间戳 + 原文件名"
         case .timestampOnly: return "仅时间戳"
         case .customWithTimestamp: return "自定义字段 + 拍摄时间"
+        case .customWithOriginalAndTimestamp: return "自定义字段 + 原文件名 + 拍摄时间"
         }
     }
 
@@ -219,56 +222,142 @@ enum MediaRenameMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .timestampWithOriginal: return "20240315_143022_IMG_1234.JPG"
         case .timestampOnly: return "20240315_143022.JPG"
         case .customWithTimestamp: return "婚礼_20240315_143022.JPG"
+        case .customWithOriginalAndTimestamp: return "婚礼_IMG_1234_20240315_143022.JPG"
         }
     }
 }
 
-/// 日期分类目录的层级粒度。
+/// 归档目录的层级规则。
+///
+/// 三种日期档位各有一对变体：带「/设备」的在日期层级之后再按机型分一层目录，
+/// 不带的则完全不按设备分类。「不归类」没有设备变体——平铺时再分机型意义不大。
+///
+/// 带设备的叶子目录统一以「月-日」命名（如 `03-15`），
+/// 用户自定义字段以连字符拼接在叶子目录名上（如 `03-15-婚礼`）：
+///
+/// ```
+/// Photos/2024/03/03-15-婚礼/iPhone 15 Pro/20240315_143022_IMG_1234.JPG
+/// ```
 enum MediaFolderGranularity: String, CaseIterable, Identifiable, Codable, Sendable {
-    case none
-    /// 仅按月分目录：`03`（跨年的素材会混在同一月份目录）
-    case month
-    /// 按月 / 日分目录：`03/15`
-    case monthDay
-    case year
-    case yearMonth
+    /// 年/月/月-日-自定义/设备：`2024/03/03-15/iPhone 15 Pro`
+    case yearMonthDayDevice
+    /// 年/月/月-日-自定义：`2024/03/03-15`
     case yearMonthDay
+    /// 年/月-日-自定义/设备：`2024/03-15/iPhone 15 Pro`
+    case yearMonthDayFlatDevice
+    /// 年/月-日-自定义：`2024/03-15`
+    case yearMonthDayFlat
+    /// 月-日-自定义/设备：`03-15/iPhone 15 Pro`
+    case monthDayFlatDevice
+    /// 月-日-自定义：`03-15`
+    case monthDayFlat
+    /// 不归类（平铺）
+    case none
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .yearMonthDayDevice: return "年/月/月-日-自定义/设备"
+        case .yearMonthDay: return "年/月/月-日-自定义"
+        case .yearMonthDayFlatDevice: return "年/月-日-自定义/设备"
+        case .yearMonthDayFlat: return "年/月-日-自定义"
+        case .monthDayFlatDevice: return "月-日-自定义/设备"
+        case .monthDayFlat: return "月-日-自定义"
         case .none: return "不归类（平铺）"
-        case .month: return "按月 03"
-        case .monthDay: return "按月 / 日 03/15"
-        case .year: return "按年 2024"
-        case .yearMonth: return "按年月 2024/03"
-        case .yearMonthDay: return "按年月日 2024/03/15"
         }
     }
 
-    /// 由拍摄时间推导出目录层级分量。
-    func components(for date: Date, calendar: Calendar = .current) -> [String] {
+    var example: String {
+        switch self {
+        case .yearMonthDayDevice: return "2024/03/03-15-婚礼/iPhone 15 Pro"
+        case .yearMonthDay: return "2024/03/03-15-婚礼"
+        case .yearMonthDayFlatDevice: return "2024/03-15-婚礼/iPhone 15 Pro"
+        case .yearMonthDayFlat: return "2024/03-15-婚礼"
+        case .monthDayFlatDevice: return "03-15-婚礼/iPhone 15 Pro"
+        case .monthDayFlat: return "03-15-婚礼"
+        case .none: return "（平铺，无子目录）"
+        }
+    }
+
+    /// 该档位是否在日期层级之后按机型再分一层目录。
+    var includesDevice: Bool {
+        switch self {
+        case .yearMonthDayDevice, .yearMonthDayFlatDevice, .monthDayFlatDevice:
+            return true
+        case .yearMonthDay, .yearMonthDayFlat, .monthDayFlat, .none:
+            return false
+        }
+    }
+
+    /// 对应的带设备变体；「不归类」没有设备变体。
+    var withDevice: MediaFolderGranularity? {
+        switch self {
+        case .yearMonthDayDevice, .yearMonthDayFlatDevice, .monthDayFlatDevice, .none:
+            return nil
+        case .yearMonthDay: return .yearMonthDayDevice
+        case .yearMonthDayFlat: return .yearMonthDayFlatDevice
+        case .monthDayFlat: return .monthDayFlatDevice
+        }
+    }
+
+    /// 对应的不带设备变体；「不归类」原样返回。
+    var withoutDevice: MediaFolderGranularity {
+        switch self {
+        case .yearMonthDayDevice: return .yearMonthDay
+        case .yearMonthDayFlatDevice: return .yearMonthDayFlat
+        case .monthDayFlatDevice: return .monthDayFlat
+        case .yearMonthDay, .yearMonthDayFlat, .monthDayFlat, .none:
+            return self
+        }
+    }
+
+    /// 由拍摄时间与自定义字段推导目录层级分量。
+    ///
+    /// 自定义字段为空时叶子目录仅保留「月-日」（如 `03-15`）；
+    /// 非空时以连字符拼接（如 `03-15-婚礼`）。调用方负责先净化字段中的分隔符。
+    /// 设备目录不在此列：它由 `MediaArchiver.relativePath` 依据 `includesDevice`
+    /// 追加在日期层级之后。
+    func components(for date: Date,
+                    calendar: Calendar = .current,
+                    custom: String = "") -> [String] {
         let parts = calendar.dateComponents([.year, .month, .day], from: date)
         let year = parts.year ?? 0
         let month = parts.month ?? 1
         let day = parts.day ?? 1
+        let monthDay = String(format: "%02d-%02d", month, day)
+        let leaf = custom.isEmpty ? monthDay : "\(monthDay)-\(custom)"
 
         switch self {
-        case .none:
-            return []
-        case .month:
-            return [String(format: "%02d", month)]
-        case .monthDay:
-            return [String(format: "%02d", month), String(format: "%02d", day)]
-        case .year:
-            return [String(format: "%04d", year)]
-        case .yearMonth:
-            return [String(format: "%04d", year), String(format: "%02d", month)]
-        case .yearMonthDay:
+        case .yearMonthDayDevice, .yearMonthDay:
             return [String(format: "%04d", year),
                     String(format: "%02d", month),
-                    String(format: "%02d", day)]
+                    leaf]
+        case .yearMonthDayFlatDevice, .yearMonthDayFlat:
+            return [String(format: "%04d", year), leaf]
+        case .monthDayFlatDevice, .monthDayFlat:
+            return [leaf]
+        case .none:
+            return []
+        }
+    }
+
+    /// 解码时兼容旧版本的档位命名（见 `init(fromLegacyRaw:)`）。
+    init(from decoder: Decoder) throws {
+        let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? ""
+        self.init(fromLegacyRaw: raw)
+    }
+}
+
+extension MediaFolderGranularity {
+    /// 宽容解码：旧版本引入过 year / yearMonth / month / monthDay 等档位，
+    /// 这些旧值不再存在，映射到语义最接近的新选项，避免旧任务文件解析失败。
+    init(fromLegacyRaw raw: String) {
+        switch raw {
+        case "yearMonthDay": self = .yearMonthDay
+        case "year", "yearMonth": self = .yearMonthDayFlat
+        case "month", "monthDay": self = .monthDayFlat
+        default: self = MediaFolderGranularity(rawValue: raw) ?? .none
         }
     }
 }
@@ -309,20 +398,25 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
     /// 是否按拍摄时间重命名文件。关闭后仅做分类归档，文件名保持原样。
     var renameByCaptureTime: Bool = true
     var renameMode: MediaRenameMode = .timestampWithOriginal
-    /// 「自定义字段 + 拍摄时间」命名方式里用户填写的自定义前缀。
-    var customRenamePrefix: String = "媒体"
-    var folderGranularity: MediaFolderGranularity = .yearMonthDay
+    /// 「自定义字段 + …」命名方式里用户填写的自定义前缀，默认留空。
+    var customRenamePrefix: String = ""
+    /// 归档目录档位。是否按机型分目录由档位本身决定（带「/设备」的变体）。
+    var folderGranularity: MediaFolderGranularity = .yearMonthDayDevice
+    /// 归档目录的自定义子目录：附加在日期层级之后（如「2024/03/15/婚礼」）。
+    /// 默认为空表示不追加；非法字符（/ 与 :）在落盘前会被替换。
+    var folderSuffix: String = ""
     /// 照片与视频分别放入独立子目录
     var separateByType: Bool = true
     var photoFolderName: String = "Photos"
     var videoFolderName: String = "Videos"
-    /// 在类型目录之下再按拍摄设备型号分一层目录
+    /// 元数据中读不到型号时的归置目录名。
     ///
-    /// 默认开启：一次导入常同时包含手机与相机素材，按机型分层后
-    /// 「哪台机器拍的」与目录结构一一对应，无需再逐个翻看 EXIF。
-    var classifyByDevice: Bool = true
-    /// 元数据中读不到型号时的归置目录名
+    /// 是否按机型分目录由 `folderGranularity` 的带「/设备」档位决定；
+    /// 这里只控制未识别机型的素材归入哪个目录。
     var unknownDeviceFolderName: String = "未知设备"
+    /// 各来源路径对应的自定义设备目录名（界面按来源填写）。
+    /// 仅当素材读不到真实机型时生效：该来源的无机型文件归入此目录。
+    var sourceDeviceNames: [String: String] = [:]
     /// 无法从元数据或文件名得到时间时，回退使用文件修改时间
     var fallbackToFileDate: Bool = true
     /// 是否尝试从文件名中解析时间戳
@@ -339,10 +433,16 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
     // 缺失的键回退到默认值。
 
     private enum CodingKeys: String, CodingKey {
-        case renameByCaptureTime, renameMode, customRenamePrefix, folderGranularity
+        case renameByCaptureTime, renameMode, customRenamePrefix, folderGranularity, folderSuffix
         case separateByType, photoFolderName, videoFolderName
-        case classifyByDevice, unknownDeviceFolderName
+        case unknownDeviceFolderName
+        case sourceDeviceNames
         case fallbackToFileDate, parseFilenameTimestamp, videoTimeZone
+    }
+
+    /// 旧版任务文件里的设备分类开关。仅用于读取时迁移档位，不再写盘。
+    private enum LegacyCodingKeys: String, CodingKey {
+        case classifyByDevice
     }
 
     init() {}
@@ -357,16 +457,29 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
             ?? fallback.renameMode
         folderGranularity = try container.decodeIfPresent(MediaFolderGranularity.self, forKey: .folderGranularity)
             ?? fallback.folderGranularity
+        folderSuffix = try container.decodeIfPresent(String.self, forKey: .folderSuffix)
+            ?? fallback.folderSuffix
         separateByType = try container.decodeIfPresent(Bool.self, forKey: .separateByType)
             ?? fallback.separateByType
         photoFolderName = try container.decodeIfPresent(String.self, forKey: .photoFolderName)
             ?? fallback.photoFolderName
         videoFolderName = try container.decodeIfPresent(String.self, forKey: .videoFolderName)
             ?? fallback.videoFolderName
-        classifyByDevice = try container.decodeIfPresent(Bool.self, forKey: .classifyByDevice)
-            ?? fallback.classifyByDevice
+
+        // 迁移：旧版「classifyByDevice 开关 + 不带设备的档位」等价于新版
+        // 「对应的带设备档位」。旧文件开着开关但档位不带设备时，升级档位
+        // 以保持原有落盘结构；新文件不含该键，无需处理。
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        let legacyClassifyByDevice = try legacyContainer.decodeIfPresent(
+            Bool.self, forKey: .classifyByDevice) ?? false
+        if legacyClassifyByDevice, let upgraded = folderGranularity.withDevice {
+            folderGranularity = upgraded
+        }
+
         unknownDeviceFolderName = try container.decodeIfPresent(String.self, forKey: .unknownDeviceFolderName)
             ?? fallback.unknownDeviceFolderName
+        sourceDeviceNames = try container.decodeIfPresent([String: String].self, forKey: .sourceDeviceNames)
+            ?? fallback.sourceDeviceNames
         fallbackToFileDate = try container.decodeIfPresent(Bool.self, forKey: .fallbackToFileDate)
             ?? fallback.fallbackToFileDate
         parseFilenameTimestamp = try container.decodeIfPresent(Bool.self, forKey: .parseFilenameTimestamp)
@@ -388,16 +501,29 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
 
     /// 设备型号对应的归档目录名。
     ///
-    /// 返回 nil 表示本任务不按设备分层——调用方据此跳过该层级，而不是插入一个空目录。
+    /// 返回 nil 表示本任务不按设备分层——档位不带「/设备」时调用方据此跳过该层级，
+    /// 而不是插入一个空目录。
     /// 未识别出型号时归入 `unknownDeviceFolderName`：把这类素材集中在一处，
     /// 比散落在日期目录里更容易事后人工整理。
     func deviceFolderName(for model: String?) -> String? {
-        guard classifyByDevice else { return nil }
+        guard folderGranularity.includesDevice else { return nil }
         if let name = Self.normalizedDeviceName(model) {
             return MediaArchiver.sanitize(name)
         }
         let fallback = unknownDeviceFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
         return MediaArchiver.sanitize(fallback.isEmpty ? "未知设备" : fallback)
+    }
+
+    /// 某个来源路径下读不到机型的素材应归入的设备目录名。
+    ///
+    /// 界面允许为每个来源单独填写设备名：同一台电脑可以同时插两张卡、
+    /// 连两台相机，各来源的无机型文件应各回各的目录。
+    /// 返回 nil 表示该来源未填写设备名，回落到 `unknownDeviceFolderName`。
+    func sourceDeviceFolderName(for sourcePath: String?) -> String? {
+        guard let sourcePath,
+              let custom = sourceDeviceNames[sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !custom.isEmpty else { return nil }
+        return MediaArchiver.sanitize(custom)
     }
 
     /// 把元数据里的原始型号整理成可用于目录名的文本。

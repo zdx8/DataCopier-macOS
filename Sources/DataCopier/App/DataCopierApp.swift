@@ -19,7 +19,12 @@ struct DataCopierApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 1040, minHeight: 680)
                 .preferredColorScheme(appearance.colorScheme)
-                .onAppear { AppearanceMode.apply(appearance) }
+                .onAppear {
+                    AppearanceMode.apply(appearance)
+                    // 启动即打开新建任务：导入相机卡是本应用的主流程，
+                    // 用户打开软件通常就是要拷素材，直接把表单呈到眼前。
+                    model.showNewTaskSheet = true
+                }
                 .onChange(of: appearanceRaw) { _, newValue in
                     AppearanceMode.apply(AppearanceMode.current(from: newValue))
                 }

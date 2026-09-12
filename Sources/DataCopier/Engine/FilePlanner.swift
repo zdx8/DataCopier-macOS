@@ -202,7 +202,18 @@ enum FilePlanner {
             let entry = pair.entry
             let kind = pair.kind
             let result = metadata[index]
-            let deviceFolder = settings.deviceFolderName(for: result.deviceModel)
+            // 设备目录解析优先级：真实 EXIF/容器机型 > 来源对应的自定义
+            // 设备名 > 全局「未知设备」目录。读不到机型时优先用该来源
+            // 独自填写的设备名，让多来源导入时各卡素材各归其位。
+            let deviceFolder: String?
+            if MediaImportSettings.normalizedDeviceName(result.deviceModel) != nil {
+                deviceFolder = settings.deviceFolderName(for: result.deviceModel)
+            } else if settings.folderGranularity.includesDevice,
+                      let custom = settings.sourceDeviceFolderName(for: entry.sourceRoot) {
+                deviceFolder = custom
+            } else {
+                deviceFolder = settings.deviceFolderName(for: nil)
+            }
 
             guard let captureDate = result.capture.date else {
                 plan.undatedFiles.append(UndatedFile(
@@ -267,6 +278,8 @@ enum FilePlanner {
         /// 来源结构下的相对路径（`来源根名/子路径`）。无法解析时为 nil，
         /// 仅在「文件拷贝」下构成错误。
         var relativePath: String?
+        /// 该文件来自任务配置里的哪个来源路径，用于按来源解析设备目录名。
+        var sourceRoot: String
     }
 
     private static func enumerate(task: CopyTask, cancellation: Cancellation) throws -> [SourceEntry] {
@@ -310,7 +323,8 @@ enum FilePlanner {
                         isSymlink: isLink,
                         linkTarget: isLink ? (try? fm.destinationOfSymbolicLink(atPath: url.path)) : nil,
                         modifiedDate: childValues.contentModificationDate,
-                        relativePath: relativePath(of: url, root: rootURL, rootName: rootName)
+                        relativePath: relativePath(of: url, root: rootURL, rootName: rootName),
+                        sourceRoot: sourcePath
                     ))
                 }
             } else {
@@ -328,7 +342,8 @@ enum FilePlanner {
                     linkTarget: isLink ? (try? fm.destinationOfSymbolicLink(atPath: sourcePath)) : nil,
                     modifiedDate: rootValues.contentModificationDate,
                     // 单文件来源没有上层目录，直接以文件名作为相对路径。
-                    relativePath: name
+                    relativePath: name,
+                    sourceRoot: sourcePath
                 ))
             }
         }
