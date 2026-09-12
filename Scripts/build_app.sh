@@ -2,7 +2,9 @@
 #
 # 把 SwiftPM 产物组装成可双击运行的 macOS 应用包。
 #
-# 用法：./Scripts/build_app.sh [debug|release]
+# 用法：./Scripts/build_app.sh [debug|release] [native|arm64|x86_64|universal]
+#   第 2 个参数为架构：默认 native（当前机器）；universal 用 lipo 合并
+#   arm64 与 x86_64 为通用二进制，可同时运行于 Apple Silicon 与 Intel Mac。
 #
 # 关于工具链：本机仅安装了 Command Line Tools 且未接受 Xcode 许可协议，
 # 因此显式指定 DEVELOPER_DIR，避免 xcrun 因许可检查而拒绝工作。
@@ -14,8 +16,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIGURATION="${1:-release}"
+ARCH="${2:-native}"
 APP_NAME="DataCopier"
 BUNDLE_ID="com.genge.datacopier"
+
+# swift build 的架构参数；native 表示不显式传 --arch。
+BUILD_ARGS=()
+if [[ "$ARCH" != "native" && "$ARCH" != "universal" ]]; then
+  BUILD_ARGS+=(--arch "$ARCH")
+fi
 
 CLT_ROOT="/Library/Developer/CommandLineTools"
 
@@ -35,12 +44,23 @@ fi
 echo "==> 工具链"
 echo "    DEVELOPER_DIR = ${DEVELOPER_DIR:-<系统默认>}"
 echo "    SDKROOT       = ${SDKROOT:-<系统默认>}"
+echo "    架构          = $ARCH"
 
 echo "==> 构建 ($CONFIGURATION)"
-swift build -c "$CONFIGURATION" --disable-sandbox --package-path "$ROOT"
-
-BIN_PATH="$(swift build -c "$CONFIGURATION" --show-bin-path --package-path "$ROOT")"
-EXECUTABLE="$BIN_PATH/$APP_NAME"
+if [[ "$ARCH" == "universal" ]]; then
+  # 通用二进制：先分别构建两种架构，再用 lipo 合并。
+  swift build -c "$CONFIGURATION" --disable-sandbox --package-path "$ROOT" --arch arm64
+  swift build -c "$CONFIGURATION" --disable-sandbox --package-path "$ROOT" --arch x86_64
+  ARM_BIN="$(swift build -c "$CONFIGURATION" --show-bin-path --package-path "$ROOT" --arch arm64)/$APP_NAME"
+  X86_BIN="$(swift build -c "$CONFIGURATION" --show-bin-path --package-path "$ROOT" --arch x86_64)/$APP_NAME"
+  UNIVERSAL_BIN="$(swift build -c "$CONFIGURATION" --show-bin-path --package-path "$ROOT" --arch arm64)/$APP_NAME-universal"
+  lipo -create -output "$UNIVERSAL_BIN" "$ARM_BIN" "$X86_BIN"
+  EXECUTABLE="$UNIVERSAL_BIN"
+else
+  swift build -c "$CONFIGURATION" --disable-sandbox --package-path "$ROOT" "${BUILD_ARGS[@]+${BUILD_ARGS[@]}}"
+  BIN_PATH="$(swift build -c "$CONFIGURATION" --show-bin-path --package-path "$ROOT" "${BUILD_ARGS[@]+${BUILD_ARGS[@]}}")"
+  EXECUTABLE="$BIN_PATH/$APP_NAME"
+fi
 
 if [[ ! -f "$EXECUTABLE" ]]; then
   echo "错误：未找到可执行文件 $EXECUTABLE" >&2
