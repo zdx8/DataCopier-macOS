@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataCopier — macOS 可校验数据拷贝工具</title>
+<meta name="description" content="DataCopier 是 macOS 原生数据拷贝工具：边拷贝边校验哈希，媒体素材按设备与拍摄时间智能归档，ffmpeg 视频转码，自动生成 PDF 统计报告。">
+<link rel="icon" type="image/png" href="AppIcon.png">
+<style>
+  :root {
+    --green-900: #14532d;
+    --green-700: #15803d;
+    --green-600: #16a34a;
+    --green-500: #22c55e;
+    --green-100: #dcfce7;
+    --green-50: #f0fdf4;
+    --ink-900: #101828;
+    --ink-700: #344054;
+    --ink-500: #667085;
+    --ink-300: #d0d5dd;
+    --ink-100: #f2f4f7;
+    --bg: #ffffff;
+    --radius: 16px;
+    --shadow: 0 1px 3px rgba(16,24,40,.08), 0 8px 32px rgba(16,24,40,.06);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Helvetica Neue", sans-serif;
+    color: var(--ink-900);
+    background: var(--bg);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.82);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    border-bottom: 1px solid var(--ink-100);
+  }
+  .nav-inner { display: flex; align-items: center; height: 60px; gap: 28px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: var(--ink-900); text-decoration: none; }
+  .brand img { width: 30px; height: 30px; border-radius: 7px; }
+  .nav-links { display: flex; gap: 24px; margin-left: auto; align-items: center; }
+  .nav-links a { color: var(--ink-700); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+  .nav-links a:hover { color: var(--green-700); }
+  .nav-cta {
+    background: var(--green-700); color: #fff !important;
+    padding: 7px 16px; border-radius: 999px; font-weight: 600;
+  }
+  .nav-cta:hover { background: var(--green-600); }
+
+  /* ---------- Hero ---------- */
+  .hero {
+    padding: 84px 0 72px;
+    background:
+      radial-gradient(900px 420px at 15% -10%, var(--green-50), transparent 65%),
+      radial-gradient(700px 380px at 90% 0%, #ecfdf5, transparent 60%);
+    text-align: center;
+  }
+  .hero img.appicon {
+    width: 112px; height: 112px; border-radius: 26px;
+    box-shadow: 0 12px 40px rgba(21,128,61,.28);
+    margin-bottom: 28px;
+  }
+  .hero h1 { font-size: 46px; line-height: 1.15; letter-spacing: -0.02em; }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, var(--green-700), var(--green-500));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .tagline { font-size: 20px; color: var(--ink-700); margin-top: 16px; font-weight: 500; }
+  .hero .sub { font-size: 16px; color: var(--ink-500); margin-top: 10px; max-width: 640px; margin-left: auto; margin-right: auto; }
+  .hero-actions { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 13px 26px; border-radius: 12px; font-size: 15.5px; font-weight: 600;
+    text-decoration: none; transition: transform .15s, box-shadow .15s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--green-700); color: #fff; box-shadow: 0 6px 20px rgba(21,128,61,.32); }
+  .btn-primary:hover { background: var(--green-600); }
+  .btn-ghost { background: #fff; color: var(--ink-900); border: 1px solid var(--ink-300); }
+  .btn-ghost:hover { border-color: var(--green-600); color: var(--green-700); }
+  .badges { margin-top: 26px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    font-size: 13px; font-weight: 500; color: var(--ink-700);
+    background: #fff; border: 1px solid var(--ink-100);
+    padding: 5px 14px; border-radius: 999px; box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+  .badge b { color: var(--green-700); }
+
+  /* ---------- Section base ---------- */
+  section { padding: 76px 0; }
+  .sec-head { text-align: center; margin-bottom: 48px; }
+  .sec-head .kicker {
+    display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .12em;
+    color: var(--green-700); text-transform: uppercase; margin-bottom: 12px;
+  }
+  .sec-head h2 { font-size: 32px; letter-spacing: -0.01em; }
+  .sec-head p { color: var(--ink-500); margin-top: 12px; font-size: 16px; max-width: 620px; margin-left: auto; margin-right: auto; }
+
+  /* ---------- Features ---------- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } .hero h1 { font-size: 34px; } }
+  .card {
+    background: #fff; border: 1px solid var(--ink-100); border-radius: var(--radius);
+    padding: 26px 24px; box-shadow: var(--shadow); transition: transform .15s, border-color .15s;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--green-500); }
+  .card .icon {
+    width: 44px; height: 44px; border-radius: 11px; background: var(--green-50);
+    display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 16px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 8px; }
+  .card p { font-size: 14.5px; color: var(--ink-500); }
+
+  /* ---------- Archive demo ---------- */
+  .archive-wrap {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center;
+  }
+  @media (max-width: 860px) { .archive-wrap { grid-template-columns: 1fr; } }
+  .archive-text h2 { font-size: 28px; margin-bottom: 14px; letter-spacing: -0.01em; }
+  .archive-text p { color: var(--ink-500); font-size: 15.5px; margin-bottom: 14px; }
+  .archive-text ul { list-style: none; margin-top: 6px; }
+  .archive-text li { padding-left: 26px; position: relative; margin-bottom: 10px; font-size: 15px; color: var(--ink-700); }
+  .archive-text li::before { content: "✓"; position: absolute; left: 0; color: var(--green-600); font-weight: 700; }
+  .tree {
+    background: #0b1f14; color: #d7f5e2; border-radius: var(--radius);
+    padding: 26px 28px; font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 13.5px; line-height: 1.9; box-shadow: 0 12px 40px rgba(11,31,20,.25);
+    overflow-x: auto;
+  }
+  .tree .dir { color: #6ee7a0; font-weight: 600; }
+  .tree .dim { color: #5f8a70; }
+  .tree .hl { color: #fff; }
+
+  /* ---------- Tech strip ---------- */
+  .tech { background: var(--green-50); border-top: 1px solid #e7f8ee; border-bottom: 1px solid #e7f8ee; }
+  .tech-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; text-align: center; }
+  @media (max-width: 820px) { .tech-grid { grid-template-columns: repeat(2, 1fr); } }
+  .tech-item .num { font-size: 34px; font-weight: 800; color: var(--green-700); letter-spacing: -0.02em; }
+  .tech-item .lbl { font-size: 14px; color: var(--ink-700); margin-top: 6px; font-weight: 500; }
+  .tech-item .det { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
+
+  /* ---------- Download ---------- */
+  .dl-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 760px; margin: 0 auto; }
+  @media (max-width: 640px) { .dl-cards { grid-template-columns: 1fr; } }
+  .dl-card {
+    border: 1px solid var(--ink-100); border-radius: var(--radius); padding: 28px;
+    text-align: center; box-shadow: var(--shadow); background: #fff;
+    display: flex; flex-direction: column; gap: 8px; align-items: center;
+  }
+  .dl-card .chip {
+    font-size: 12px; font-weight: 700; color: var(--green-700); background: var(--green-100);
+    padding: 3px 12px; border-radius: 999px; letter-spacing: .04em;
+  }
+  .dl-card h3 { font-size: 18px; }
+  .dl-card .meta { font-size: 13.5px; color: var(--ink-500); }
+  .dl-card a {
+    margin-top: 12px; display: inline-flex; align-items: center; gap: 8px;
+    background: var(--green-700); color: #fff; text-decoration: none;
+    padding: 10px 22px; border-radius: 10px; font-weight: 600; font-size: 14.5px;
+  }
+  .dl-card a:hover { background: var(--green-600); }
+
+  /* ---------- FAQ ---------- */
+  .faq { max-width: 760px; margin: 0 auto; }
+  details {
+    border: 1px solid var(--ink-100); border-radius: 12px; padding: 18px 22px;
+    margin-bottom: 12px; background: #fff;
+  }
+  details summary { font-weight: 600; cursor: pointer; font-size: 15.5px; }
+  details p { margin-top: 10px; color: var(--ink-500); font-size: 14.5px; }
+  details code {
+    background: var(--ink-100); padding: 2px 7px; border-radius: 6px;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 13px;
+  }
+
+  /* ---------- Footer ---------- */
+  footer { border-top: 1px solid var(--ink-100); padding: 40px 0 48px; }
+  .foot-inner { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .foot-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+  .foot-brand img { width: 26px; height: 26px; border-radius: 6px; }
+  .foot-links { margin-left: auto; display: flex; gap: 20px; }
+  .foot-links a { color: var(--ink-500); text-decoration: none; font-size: 14px; }
+  .foot-links a:hover { color: var(--green-700); }
+  .foot-note { width: 100%; margin-top: 18px; font-size: 13px; color: var(--ink-500); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container nav-inner">
+    <a class="brand" href="#"><img src="AppIcon.png" alt="DataCopier 图标">DataCopier</a>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#archive">媒体归档</a>
+      <a href="#tech">技术</a>
+      <a href="#faq">常见问题</a>
+      <a class="nav-cta" href="#download">免费下载</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <img class="appicon" src="AppIcon.png" alt="DataCopier 应用图标">
+    <h1>不只是复制，<br>是<span class="grad">可校验</span>的拷贝</h1>
+    <p class="tagline">macOS 原生数据拷贝工具 · 边拷边校验 · 自动统计报告</p>
+    <p class="sub">面向大批量、有校验需求的文件搬运场景：逐文件记录处理结果、逐文件校验哈希，任务完成自动生成 PDF 统计报告。</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="https://github.com/zdx8/DataCopier-macOS/releases/tag/v1.0.0">⬇ 免费下载 v1.0.0</a>
+      <a class="btn btn-ghost" href="https://github.com/zdx8/DataCopier-macOS">查看源码 (MIT)</a>
+    </div>
+    <div class="badges">
+      <span class="badge"><b>macOS 14+</b> 原生 SwiftUI</span>
+      <span class="badge">Apple Silicon & Intel</span>
+      <span class="badge"><b>360+</b> 项自检断言</span>
+      <span class="badge">MIT 开源</span>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="container">
+    <div class="sec-head">
+      <span class="kicker">Features</span>
+      <h2>拷贝、归档、转码、报告，一站完成</h2>
+      <p>从整盘迁移到相机卡素材整理，每一次文件搬运都有据可查。</p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="icon">📋</div>
+        <h3>文件拷贝 + 哈希校验</h3>
+        <p>完整保留来源目录结构，拷贝的同时逐文件计算 SHA-256 / MD5 / xxHash64，单次读盘完成校验，不放过任何一比特的丢失。</p>
+      </div>
+      <div class="card">
+        <div class="icon">📷</div>
+        <h3>媒体智能归档</h3>
+        <p>只拷照片视频，读取 EXIF 与容器拍摄时间，按设备型号 / 年 / 月 / 日期分类归档，支持自定义前缀与时间戳重命名。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🎬</div>
+        <h3>视频转码</h3>
+        <p>基于 FFmpeg 的独立转码任务，H.264 / HEVC 硬件加速（VideoToolbox），预设码率与分辨率，产物变大自动丢弃保护。</p>
+      </div>
+      <div class="card">
+        <div class="icon">📄</div>
+        <h3>PDF 统计报告</h3>
+        <p>任务完成自动生成图形化 PDF 报告：环形图结局分布、设备与目录分布、逐文件校验值；也可导出 Markdown / CSV。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔌</div>
+        <h3>USB 自动感知</h3>
+        <p>插入相机卡、U 盘自动弹出新建任务并预填来源，自动识别设备型号；菜单栏常驻，关闭窗口随时唤回。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🌗</div>
+        <h3>为 macOS 而生</h3>
+        <p>SwiftUI 原生构建，浅色 / 深色 / 跟随系统外观一键切换，占用极低——整个应用仅约 1.5 MB。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="archive" class="tech">
+  <div class="container archive-wrap">
+    <div class="archive-text">
+      <h2>素材回来就有条理</h2>
+      <p>相机卡插入即识别设备型号，照片视频按「类型 → 日期 → 设备」自动归档，文件名可用自定义字段 + 拍摄时间重命名。同一张卡重跑天然幂等，重复素材自动跳过。</p>
+      <ul>
+        <li>拍摄时间四级回退：EXIF → 视频容器 → 文件名时间戳 → 修改时间</li>
+        <li>归档层级七档可选，最深到「年 / 月 / 月-日-自定义 / 类型 / 设备」</li>
+        <li>照片视频分开统计，报告记录素材时间范围与目录分布</li>
+        <li>每来源独立设备名，双卡同拷不混淆</li>
+      </ul>
+    </div>
+    <div class="tree">
+<span class="dim">婚礼素材/</span><br>
+├── <span class="dir">Photos/</span><br>
+│&nbsp;&nbsp;&nbsp;└── <span class="dir">2024/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">03/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">03-15-婚礼/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="dir">Photos/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;└── <span class="dir">Canon EOS R5/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="hl">婚礼_IMG_1234_20240315_143022.JPG</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">Videos/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">Sony FX3/</span><br>
+│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="hl">婚礼_C0001_20240315_145510.MP4</span><br>
+└── <span class="dir">checksums.sha256</span> <span class="dim">← 逐文件校验清单</span>
+    </div>
+  </div>
+</section>
+
+<section id="tech">
+  <div class="container">
+    <div class="sec-head">
+      <span class="kicker">Engineering</span>
+      <h2>把数据安全当作第一优先级</h2>
+    </div>
+    <div class="tech-grid">
+      <div class="tech-item">
+        <div class="num">0 次</div>
+        <div class="lbl">二次读盘</div>
+        <div class="det">拷贝与哈希在单次读写循环内同时完成</div>
+      </div>
+      <div class="tech-item">
+        <div class="num">原子落盘</div>
+        <div class="lbl">中断不留残缺文件</div>
+        <div class="det">临时文件 + 原子重命名，目标目录永远干净</div>
+      </div>
+      <div class="tech-item">
+        <div class="num">3 种</div>
+        <div class="lbl">校验算法</div>
+        <div class="det">SHA-256 / MD5 可用 shasum -c 复核，xxHash64 高速摘要</div>
+      </div>
+      <div class="tech-item">
+        <div class="num">360+</div>
+        <div class="lbl">自检断言</div>
+        <div class="det">拷贝、校验、归档、转码、报告渲染全链路回归</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="container">
+    <div class="sec-head">
+      <span class="kicker">Download</span>
+      <h2>下载 DataCopier v1.0.0</h2>
+      <p>免费开源，选择与你 Mac 匹配的版本。首次打开若提示无法验证，请前往「系统设置 → 隐私与安全性」点击「仍要打开」。</p>
+    </div>
+    <div class="dl-cards">
+      <div class="dl-card">
+        <span class="chip">Apple Silicon</span>
+        <h3>M1 / M2 / M3 / M4</h3>
+        <div class="meta">DataCopier-v1.0.0-arm64.dmg</div>
+        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.0/DataCopier-v1.0.0-arm64.dmg">⬇ 下载 arm64 版</a>
+      </div>
+      <div class="dl-card">
+        <span class="chip">Intel</span>
+        <h3>Intel 芯片 Mac</h3>
+        <div class="meta">DataCopier-v1.0.0-x86_64.dmg</div>
+        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.0/DataCopier-v1.0.0-x86_64.dmg">⬇ 下载 Intel 版</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" style="padding-top: 0;">
+  <div class="container">
+    <div class="sec-head">
+      <span class="kicker">FAQ</span>
+      <h2>常见问题</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>和直接拖拽复制有什么区别？</summary>
+        <p>DataCopier 逐文件记录处理结果并校验哈希，任何静默损坏都会被报告捕获；中断只留可识别的临时文件，不会出现残缺文件；完成后自动生成统计报告，适合素材交付、项目迁移等对数据完整性有要求的场景。</p>
+      </details>
+      <details>
+        <summary>视频转码需要额外安装什么？</summary>
+        <p>需要系统安装 FFmpeg（应用不内置、不分发）。可用 <code>brew install ffmpeg</code> 安装，应用会自动在常见路径查找，也可在「设置 → 运行环境」手动指定。不安装 FFmpeg 时拷贝与归档功能完全不受影响。</p>
+      </details>
+      <details>
+        <summary>插入相机卡后没有自动弹窗？</summary>
+        <p>请检查「设置 → 通用 → 检测 USB 移动设备」开关是否开启。开启后插入相机存储卡、U 盘等可移除卷会自动唤起新建任务并预填来源与设备型号。</p>
+      </details>
+      <details>
+        <summary>支持哪些照片 / 视频格式？</summary>
+        <p>照片支持 65 种扩展名（JPG、HEIC、RAW 系列等），视频支持 46 种（MP4、MOV、BRAW 等）。拍摄时间优先读取 EXIF 与视频容器，无法读取时按文件名时间戳、修改时间逐级回退。</p>
+      </details>
+      <details>
+        <summary>如何自行构建？</summary>
+        <p>项目使用 SwiftPM 手工打包，无需 Xcode 工程文件：<code>./Scripts/run_selfcheck.sh</code> 运行自检，<code>./Scripts/build_app.sh release</code> 打包应用，在仅有 Command Line Tools 的机器上即可构建。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container foot-inner">
+    <div class="foot-brand"><img src="AppIcon.png" alt="">DataCopier</div>
+    <div class="foot-links">
+      <a href="https://github.com/zdx8/DataCopier-macOS">GitHub</a>
+      <a href="https://github.com/zdx8/DataCopier-macOS/releases">Releases</a>
+      <a href="https://github.com/zdx8/DataCopier-macOS/blob/main/LICENSE">MIT License</a>
+    </div>
+    <div class="foot-note">
+      © 2026 DataCopier-macOS Contributors · 转码能力依赖系统安装的 <a href="https://ffmpeg.org" style="color:var(--green-700)">FFmpeg</a>，本项目不包含、不分发 FFmpeg 二进制。
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
