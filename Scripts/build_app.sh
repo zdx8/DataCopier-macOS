@@ -19,6 +19,8 @@ CONFIGURATION="${1:-release}"
 ARCH="${2:-native}"
 APP_NAME="DataCopier"
 BUNDLE_ID="com.genge.datacopier"
+# 应用版本号：Info.plist 与 DMG 文件名共用此值，发版时只改这一处。
+APP_VERSION="1.0.1"
 
 # swift build 的架构参数；native 表示不显式传 --arch。
 BUILD_ARGS=()
@@ -79,7 +81,7 @@ chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
 # 这里只做拷贝，避免每次打包都跑一遍 iconutil。
 cp "$ROOT/Scripts/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -97,9 +99,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>LSMinimumSystemVersion</key>

@@ -14,6 +14,16 @@ macOS 原生数据拷贝工具，使用 **SwiftUI** 构建（SwiftPM 手工打�
 - **菜单栏常驻**——关闭窗口可最小化到菜单栏，随时唤回。
 - **外观**——浅色 / 深色 / 跟随系统，工具栏一键切换。
 
+## 下载
+
+| 机型 | 安装包 |
+| --- | --- |
+| Apple Silicon（M 系列） | [DataCopier-v1.0.1-arm64.dmg](https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.1/DataCopier-v1.0.1-arm64.dmg) |
+| Intel（x86_64） | [DataCopier-v1.0.1-x86_64.dmg](https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.1/DataCopier-v1.0.1-x86_64.dmg) |
+
+均为临时签名的未公证版本，首次打开若被 Gatekeeper 拦截，请在「系统设置 → 隐私与安全性」中放行。
+全部版本见 [Releases](https://github.com/zdx8/DataCopier-macOS/releases)。
+
 ## 环境要求
 
 - macOS 14+
@@ -29,11 +39,15 @@ macOS 原生数据拷贝工具，使用 **SwiftUI** 构建（SwiftPM 手工打�
 ## 构建
 
 ```bash
-# 运行自检（319 项断言，覆盖拷贝 / 校验 / 归档 / 转码 / 报告渲染）
+# 运行自检（414 项断言，覆盖拷贝 / 校验 / 归档 / 转码 / 报告渲染 / 序列化往返）
 ./Scripts/run_selfcheck.sh
 
 # 打包 dist/DataCopier.app
 ./Scripts/build_app.sh release
+
+# 打成 DMG 安装包（版本号取自 build_app.sh 的 APP_VERSION）
+./Scripts/make_dmg.sh 1.0.1 arm64
+./Scripts/make_dmg.sh 1.0.1 x86_64
 ```
 
 > 脚本使用固定的 `DEVELOPER_DIR` / `SDKROOT`，在仅有 Command Line Tools 的机器上即可构建，无需完整 Xcode。
@@ -48,7 +62,8 @@ Sources/DataCopier/
   Engine/       # 拷贝、校验、媒体归档、转码、PDF 报告渲染
   Models/       # 数据模型（宽容解码，兼容旧配置文件）
   Support/      # 文件面板等工具
-Scripts/        # 构建与自检脚本、图标素材
+Scripts/        # 构建、打包与自检脚本、图标素材
+website/        # 官网静态页（发布内容同步至 gh-pages 分支）
 ```
 
 ## 许可证
