@@ -214,13 +214,13 @@
     <p class="tagline">macOS 原生数据拷贝工具 · 边拷边校验 · 自动统计报告</p>
     <p class="sub">面向大批量、有校验需求的文件搬运场景：逐文件记录处理结果、逐文件校验哈希，任务完成自动生成 PDF 统计报告。</p>
     <div class="hero-actions">
-      <a class="btn btn-primary" href="https://github.com/zdx8/DataCopier-macOS/releases/tag/v1.0.0">⬇ 免费下载 v1.0.0</a>
+      <a class="btn btn-primary" href="https://github.com/zdx8/DataCopier-macOS/releases/tag/v1.0.1">⬇ 免费下载 v1.0.1</a>
       <a class="btn btn-ghost" href="https://github.com/zdx8/DataCopier-macOS">查看源码 (MIT)</a>
     </div>
     <div class="badges">
       <span class="badge"><b>macOS 14+</b> 原生 SwiftUI</span>
       <span class="badge">Apple Silicon & Intel</span>
-      <span class="badge"><b>360+</b> 项自检断言</span>
+      <span class="badge"><b>414+</b> 项自检断言</span>
       <span class="badge">MIT 开源</span>
     </div>
   </div>
@@ -320,7 +320,7 @@
         <div class="det">SHA-256 / MD5 可用 shasum -c 复核，xxHash64 高速摘要</div>
       </div>
       <div class="tech-item">
-        <div class="num">360+</div>
+        <div class="num">414+</div>
         <div class="lbl">自检断言</div>
         <div class="det">拷贝、校验、归档、转码、报告渲染全链路回归</div>
       </div>
@@ -332,21 +332,21 @@
   <div class="container">
     <div class="sec-head">
       <span class="kicker">Download</span>
-      <h2>下载 DataCopier v1.0.0</h2>
+      <h2>下载 DataCopier v1.0.1</h2>
       <p>免费开源，选择与你 Mac 匹配的版本。首次打开若提示无法验证，请前往「系统设置 → 隐私与安全性」点击「仍要打开」。</p>
     </div>
     <div class="dl-cards">
       <div class="dl-card">
         <span class="chip">Apple Silicon</span>
         <h3>M1 / M2 / M3 / M4</h3>
-        <div class="meta">DataCopier-v1.0.0-arm64.dmg</div>
-        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.0/DataCopier-v1.0.0-arm64.dmg">⬇ 下载 arm64 版</a>
+        <div class="meta">DataCopier-v1.0.1-arm64.dmg</div>
+        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.1/DataCopier-v1.0.1-arm64.dmg">⬇ 下载 arm64 版</a>
       </div>
       <div class="dl-card">
         <span class="chip">Intel</span>
         <h3>Intel 芯片 Mac</h3>
-        <div class="meta">DataCopier-v1.0.0-x86_64.dmg</div>
-        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.0/DataCopier-v1.0.0-x86_64.dmg">⬇ 下载 Intel 版</a>
+        <div class="meta">DataCopier-v1.0.1-x86_64.dmg</div>
+        <a href="https://github.com/zdx8/DataCopier-macOS/releases/download/v1.0.1/DataCopier-v1.0.1-x86_64.dmg">⬇ 下载 Intel 版</a>
       </div>
     </div>
   </div>
@@ -377,7 +377,7 @@
       </details>
       <details>
         <summary>如何自行构建？</summary>
-        <p>项目使用 SwiftPM 手工打包，无需 Xcode 工程文件：<code>./Scripts/run_selfcheck.sh</code> 运行自检，<code>./Scripts/build_app.sh release</code> 打包应用，在仅有 Command Line Tools 的机器上即可构建。</p>
+        <p>项目使用 SwiftPM 手工打包，无需 Xcode 工程文件：<code>./Scripts/run_selfcheck.sh</code> 运行自检，<code>./Scripts/build_app.sh release</code> 打包应用，<code>./Scripts/make_dmg.sh 1.0.1 arm64</code> 生成 DMG，在仅有 Command Line Tools 的机器上即可构建。</p>
       </details>
     </div>
   </div>

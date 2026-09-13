@@ -34,7 +34,9 @@ fi
 APP_DIR="$ROOT/dist/DataCopier.app"
 OUT="$ROOT/dist/DataCopier-v${VERSION}-${LABEL}.dmg"
 
-echo "==> 构建 release 应用包（架构 $ARCH）"
+# 注意：变量名必须用花括号界定。macOS 自带 bash 3.2 会把紧跟变量的中文
+# 全角字符首字节并入变量名，`$ARCH）` 会被解析成未定义变量而报错。
+echo "==> 构建 release 应用包（架构 ${ARCH}）"
 "$ROOT/Scripts/build_app.sh" release "$ARCH"
 
 if [[ ! -d "$APP_DIR" ]]; then
