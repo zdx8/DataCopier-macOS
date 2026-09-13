@@ -45,8 +45,16 @@ enum Format {
         return "剩余 " + duration(interval)
     }
 
+    /// 进度占比。裁剪到 0–100%，用于「已完成百分比」这类不可能超过 1 的比例。
     static func percent(_ fraction: Double) -> String {
         String(format: "%.1f%%", min(1, max(0, fraction)) * 100)
+    }
+
+    /// 体积/压缩比。**不做** 0–100% 裁剪：输出体积膨胀到 150% 时必须如实显示
+    /// `150.0%`，否则会掩盖负收益（「压缩比 100.0% / 节省 0 B」）。
+    static func ratio(_ fraction: Double) -> String {
+        guard fraction.isFinite else { return "—" }
+        return String(format: "%.1f%%", max(0, fraction) * 100)
     }
 
     private static let dateFormatter: DateFormatter = {

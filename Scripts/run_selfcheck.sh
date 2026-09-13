@@ -38,6 +38,7 @@ SOURCES=(
   "$SRC/Engine/FFmpegRunner.swift"
   "$SRC/Engine/TranscodeService.swift"
   "$SRC/Support/Format.swift"
+  "$SRC/Support/CorruptFileBackup.swift"
   "$SRC/Support/USBDevice.swift"
   "$SRC/Support/USBDeviceScanner.swift"
   "$ROOT/Scripts/selfcheck/main.swift"

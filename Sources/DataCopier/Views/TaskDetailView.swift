@@ -228,7 +228,7 @@ struct TaskDetailView: View {
                 StatCard(title: "输入体积", value: Format.bytes(report.transcodeInputBytes), caption: "原始视频")
                 StatCard(title: "输出体积", value: Format.bytes(report.transcodeOutputBytes),
                          caption: report.transcodeCompressionRatio > 0
-                            ? "原片的 " + Format.percent(report.transcodeCompressionRatio)
+                            ? "原片的 " + Format.ratio(report.transcodeCompressionRatio)
                             : "—")
                 StatCard(title: "节省空间", value: Format.bytes(report.transcodeSavedBytes),
                          tint: report.transcodeSavedBytes > 0 ? .green : .primary,
@@ -237,12 +237,12 @@ struct TaskDetailView: View {
                 StatCard(title: "总耗时", value: Format.duration(report.elapsed),
                          caption: "计划 \(report.totalFiles) 个视频")
             } else {
-                StatCard(title: "成功拷贝", value: "\(report.copiedFiles)", caption: Format.bytes(report.copiedBytes))
+                StatCard(title: "成功拷贝", value: "\(report.succeededCopyFiles)", caption: Format.bytes(report.copiedBytes))
                 StatCard(title: "校验通过", value: "\(report.verifiedFiles)", tint: .green,
                          caption: report.verifyAfterCopy ? "已启用复核" : "未启用复核")
                 StatCard(title: "跳过", value: "\(report.skippedFiles)", caption: "按冲突策略")
-                StatCard(title: "失败", value: "\(report.failedFiles)",
-                         tint: report.failedFiles > 0 ? .red : .primary, caption: "读取或写入错误")
+                StatCard(title: "失败", value: "\(report.readWriteFailedFiles)",
+                         tint: report.readWriteFailedFiles > 0 ? .red : .primary, caption: "读取或写入错误")
                 StatCard(title: "校验不一致", value: "\(report.verifyFailedFiles)",
                          tint: report.verifyFailedFiles > 0 ? .red : .primary, caption: "数据可能损坏")
                 StatCard(title: "平均速度", value: Format.speed(report.averageBytesPerSecond),
@@ -268,7 +268,7 @@ struct TaskDetailView: View {
                              caption: report.transcodePresetName ?? "—")
                     StatCard(title: "转码后体积", value: Format.bytes(report.transcodeOutputBytes),
                              caption: report.transcodeCompressionRatio > 0
-                                ? "原片的 " + Format.percent(report.transcodeCompressionRatio)
+                                ? "原片的 " + Format.ratio(report.transcodeCompressionRatio)
                                 : "—")
                     StatCard(title: "节省空间", value: Format.bytes(report.transcodeSavedBytes),
                              tint: report.transcodeSavedBytes > 0 ? .green : .primary,
@@ -407,7 +407,7 @@ struct TaskDetailView: View {
                 metric("输入总量", Format.bytes(report.transcodeInputBytes))
                 metric("输出总量", Format.bytes(report.transcodeOutputBytes))
                 metric("压缩比", report.transcodeCompressionRatio > 0
-                       ? Format.percent(report.transcodeCompressionRatio) : "—")
+                       ? Format.ratio(report.transcodeCompressionRatio) : "—")
                 metric("耗时", Format.duration(report.transcodeDuration))
             }
 
@@ -706,9 +706,7 @@ struct TaskDetailView: View {
                 TranscodeForm(settings: Binding(
                     get: { task.options.transcodeSettings },
                     set: { newValue in
-                        var updated = task
-                        updated.options.transcodeSettings = newValue
-                        model.update(updated)
+                        model.editOptions(task.id) { $0.transcodeSettings = newValue }
                     }
                 ), standalone: true)
             }
@@ -722,9 +720,9 @@ struct TaskDetailView: View {
         let binding = Binding(
             get: { task.options },
             set: { newValue in
-                var updated = task
-                updated.options = newValue
-                model.update(updated)
+                // 基于 AppModel 里的**最新**记录改选项，而不是视图渲染时的快照，
+                // 避免把运行中/刚完成的回调写入的 state、lastReport 覆盖掉。
+                model.editOptions(task.id) { $0 = newValue }
             }
         )
 
@@ -741,9 +739,7 @@ struct TaskDetailView: View {
                 TranscodeForm(settings: Binding(
                     get: { binding.wrappedValue.transcodeSettings },
                     set: { newValue in
-                        var updated = task
-                        updated.options.transcodeSettings = newValue
-                        model.update(updated)
+                        model.editOptions(task.id) { $0.transcodeSettings = newValue }
                     }
                 ))
             }

@@ -132,7 +132,7 @@ enum FilePlanner {
         let entries = try enumerate(task: task, cancellation: cancellation)
 
         var plan = Plan()
-        var seenDestinations = Set<String>()
+        var seenRelatives = Set<String>()
         var unresolved: [String] = []
 
         for entry in entries {
@@ -143,12 +143,14 @@ enum FilePlanner {
                 continue
             }
 
-            let destinationPath = join(task.destination, relative)
-            if !seenDestinations.insert(normalize(destinationPath).lowercased()).inserted { continue }
+            // 目标路径撞车时改名而非丢弃：拷贝工具不能让文件无声消失。
+            // 来源根名已在 enumerate 里去重，这里是兜底的第二道防线。
+            let uniqueRelative = uniqueRelativePath(relative, seen: &seenRelatives)
+            let destinationPath = join(task.destination, uniqueRelative)
 
             plan.items.append(FilePlanItem(
                 sourcePath: entry.sourcePath,
-                relativePath: relative,
+                relativePath: uniqueRelative,
                 destinationPath: destinationPath,
                 size: entry.size,
                 isSymlink: entry.isSymlink,
@@ -287,11 +289,26 @@ enum FilePlanner {
         let excluded = Set(task.options.excludedNames)
         var entries: [SourceEntry] = []
 
+        // 同名来源根（例如两张相机卡都叫 DCIM 或 Photos）若都用原名，
+        // 「文件拷贝」下算出的相对路径会彼此撞车，后加入的来源会被静默丢弃。
+        // 这里为重复的根名依次追加「 2」「 3」后缀，保证各来源互不覆盖。
+        var usedRootNames = Set<String>()
+        func uniqueRootName(_ raw: String) -> String {
+            var candidate = raw
+            var index = 2
+            while !usedRootNames.insert(candidate.lowercased()).inserted {
+                candidate = "\(raw) \(index)"
+                index += 1
+                if index > 9999 { break }
+            }
+            return candidate
+        }
+
         for sourcePath in task.sources {
             try cancellation.check()
             let originalURL = URL(fileURLWithPath: sourcePath)
             let rootURL = originalURL.resolvingSymlinksInPath()
-            let rootName = originalURL.lastPathComponent
+            let rootName = uniqueRootName(originalURL.lastPathComponent)
 
             guard let rootValues = try? rootURL.resourceValues(forKeys: Set(resourceKeys)) else {
                 continue
@@ -341,7 +358,9 @@ enum FilePlanner {
                     isSymlink: isLink,
                     linkTarget: isLink ? (try? fm.destinationOfSymbolicLink(atPath: sourcePath)) : nil,
                     modifiedDate: rootValues.contentModificationDate,
-                    // 单文件来源没有上层目录，直接以文件名作为相对路径。
+                    // 单文件来源没有上层目录，直接以文件名作为相对路径；
+                    // 不同目录下的同名文件由 plan 阶段的序号后缀区分（a.jpg / a_2.jpg），
+                    // 因此这里不做根名去重，避免文件名里出现空格。
                     relativePath: name,
                     sourceRoot: sourcePath
                 ))
@@ -402,19 +421,25 @@ enum FilePlanner {
     /// 去重键统一小写：macOS 默认的 APFS 不区分大小写，`A.JPG` 与 `a.jpg`
     /// 会落到同一个位置。
     private static func uniqueRelativePath(_ relative: String, seen: inout Set<String>) -> String {
-        var candidate = relative
+        // 首次出现直接返回，保持既有行为与文件名。
+        guard !seen.insert(relative.lowercased()).inserted else { return relative }
+
+        // 词干必须基于**原始**文件名计算。若每轮都从更新后的候选名再取词干，
+        // 第 3 个同名文件会得到 `a_2_3.jpg` 而不是 `a_3.jpg`。
+        let directory = (relative as NSString).deletingLastPathComponent
+        let file = (relative as NSString).lastPathComponent
+        let ext = (file as NSString).pathExtension
+        let stem = (file as NSString).deletingPathExtension
+
         var index = 2
-        while !seen.insert(candidate.lowercased()).inserted {
-            let directory = (candidate as NSString).deletingLastPathComponent
-            let file = (candidate as NSString).lastPathComponent
-            let ext = (file as NSString).pathExtension
-            let stem = (file as NSString).deletingPathExtension
+        while index <= 9999 {
             let name = ext.isEmpty ? "\(stem)_\(index)" : "\(stem)_\(index).\(ext)"
-            candidate = directory.isEmpty || directory == "." ? name : "\(directory)/\(name)"
+            let candidate = directory.isEmpty || directory == "." ? name : "\(directory)/\(name)"
+            if seen.insert(candidate.lowercased()).inserted { return candidate }
             index += 1
-            if index > 9999 { break }
         }
-        return candidate
+        // 极端情况（同名超过 9999 个）退化为原名，至少不产生新的撞车键。
+        return relative
     }
 
     // MARK: - 目录准备

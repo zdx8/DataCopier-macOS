@@ -71,9 +71,31 @@ final class MenuBarController: NSObject {
     /// 仍在 NSApp.windows 中，直接 makeKeyAndOrderFront 即可恢复。
     static func showMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        let window = NSApp.windows.first { $0.title == "数据拷贝" && !$0.isKind(of: NSPanel.self) }
-            ?? NSApp.windows.first { !$0.isKind(of: NSPanel.self) }
-        window?.makeKeyAndOrderFront(nil)
+        MainWindow.standard?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// MARK: - 主窗口识别
+
+/// 主窗口的统一识别入口。
+///
+/// 不再用标题字符串匹配：`WindowGroup(" ")` 的标题是单个空格，
+/// 且会随系统本地化变化，靠它做标识必然失效。这里改为结构判定 ——
+/// 是普通窗口（非面板）、不是附着的工作表、且承载内容视图控制器。
+enum MainWindow {
+
+    /// 是否为候选主窗口。
+    static func isCandidate(_ window: NSWindow) -> Bool {
+        !window.isKind(of: NSPanel.self)
+            && !window.isSheet
+            && window.sheetParent == nil
+            && window.contentViewController != nil
+    }
+
+    /// 当前进程内的主窗口；若结构判定落空，回退到首个非面板、非工作表的窗口。
+    static var standard: NSWindow? {
+        NSApp.windows.first(where: isCandidate)
+            ?? NSApp.windows.first { !$0.isKind(of: NSPanel.self) && $0.sheetParent == nil }
     }
 }
 
@@ -83,17 +105,47 @@ final class MenuBarController: NSObject {
 ///
 /// SwiftUI 的 WindowGroup 没有提供「关窗回调」，因此通过 NSWindowDelegate
 /// 的 windowShouldClose 实现：最小化模式下不真正关闭，只把窗口隐藏。
+///
+/// 注意：SwiftUI 会给窗口挂上自己的 delegate（实测为 `AppKitWindowController`），
+/// 直接覆写会丢掉它的窗口管理行为。这里保存原 delegate，未由本类处理的消息
+/// 一律转发回去；`NSWindow.delegate` 是弱引用，故用强引用持有以免其被回收。
 final class MainWindowCloseDelegate: NSObject, NSWindowDelegate {
 
+    /// 被覆写的原 delegate（SwiftUI 的窗口控制器）。强引用以保活。
+    private var forwardee: NSWindowDelegate?
+
+    /// 把关闭拦截挂到窗口上。重复调用只挂一次。
+    func attach(to window: NSWindow) {
+        guard !(window.delegate is MainWindowCloseDelegate) else { return }
+        if let existing = window.delegate {
+            forwardee = existing
+        }
+        window.delegate = self
+    }
+
+    // 未实现的可选 delegate 方法：声明响应并转发给原 delegate，
+    // 否则 AppKit 会因为「本对象不响应」而彻底跳过这些回调。
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return forwardee?.responds(to: aSelector) ?? false
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if super.responds(to: aSelector) { return nil }
+        guard let forwardee, forwardee.responds(to: aSelector) else { return nil }
+        return forwardee
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard CloseAction.current == .minimize else { return true }
+        guard CloseAction.current == .minimize else {
+            // 退出模式：把裁决权交回原 delegate（若有），默认放行。
+            return forwardee?.windowShouldClose?(sender) ?? true
+        }
         sender.orderOut(nil)
         // 隐藏窗口后把焦点还给其他应用，避免留下一个无窗口的「前台应用」。
         NSApp.hide(nil)
         return false
     }
-
-    func windowWillClose(_ notification: Notification) {}
 }
 
 extension Notification.Name {

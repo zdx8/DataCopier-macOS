@@ -58,18 +58,37 @@ struct NewTaskSheet: View {
             // USB 插入唤起：直接跳到拷贝表单，来源预填为刚挂载的卷，
             // 用户补选目标文件夹即可开始拷贝。同时后台扫描卡内媒体文件，
             // 读取拍摄设备型号用于来源展示与归档路径预览。
-            if let usb = model.pendingUSBSource {
-                model.pendingUSBSource = nil
-                sources = [usb]
-                step = .copy
-                usbHint = model.pendingUSBHint
-                model.pendingUSBHint = nil
-            }
+            consumePendingUSB()
 
             // 打开新建任务即自动识别：无来源时扫描电脑上已挂载的 USB 存储
             // 设备并列入来源；USB 唤起时则扫描卡内文件读取型号。
             startDeviceScan()
         }
+        .onChange(of: model.pendingUSBSource) { _, _ in
+            // 表单已经在屏上时插卡：onAppear 不会重跑，必须在这里消费。
+            // 否则预填与提示条要等到下一次打开表单才生效，届时预填的
+            // 可能是早已拔出的卷（随后校验报「来源不存在」，现象令人困惑）。
+            consumePendingUSB()
+        }
+    }
+
+    /// 消费 USB 唤起留下的预填来源与提示条。onAppear 与「插卡时表单已打开」两条路径共用。
+    private func consumePendingUSB() {
+        guard let usb = model.pendingUSBSource else { return }
+        model.pendingUSBSource = nil
+
+        // 表单刚打开时 sources 为空，等价于原先的「预填为唯一来源」；
+        // 若用户已选过来源，则追加而非覆盖，避免插卡抹掉已有输入。
+        if sources.isEmpty {
+            sources = [usb]
+        } else if !sources.contains(usb) {
+            sources.append(usb)
+        }
+        // 仅在用户尚未进入具体配置时才强制跳到拷贝表单，避免打断正在填写的内容。
+        if step == .choose { step = .copy }
+
+        usbHint = model.pendingUSBHint
+        model.pendingUSBHint = nil
     }
 
     // MARK: - 头部

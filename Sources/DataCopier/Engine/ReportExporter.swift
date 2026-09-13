@@ -112,12 +112,12 @@ enum ReportExporter {
         lines.append("| --- | --- |")
         lines.append("| 计划文件数 | \(report.totalFiles) |")
         lines.append("| 计划总大小 | \(Format.bytes(report.totalBytes)) |")
-        lines.append("| 成功拷贝 | \(report.copiedFiles) |")
-        lines.append("| 成功拷贝字节 | \(Format.bytes(report.copiedBytes)) |")
+        lines.append("| 成功拷贝 | \(report.succeededCopyFiles) |")
+        lines.append("| 已写入字节 | \(Format.bytes(report.copiedBytes)) |")
         lines.append("| 校验通过 | \(report.verifiedFiles) |")
         lines.append("| 校验不一致 | \(report.verifyFailedFiles) |")
         lines.append("| 跳过 | \(report.skippedFiles) |")
-        lines.append("| 失败 | \(report.failedFiles) |")
+        lines.append("| 失败 | \(report.readWriteFailedFiles) |")
         lines.append("| 平均速度 | \(Format.speed(report.averageBytesPerSecond)) |")
         lines.append("| 峰值速度 | \(Format.speed(report.peakBytesPerSecond)) |")
         if report.truncatedRecordCount > 0 {
@@ -150,8 +150,7 @@ enum ReportExporter {
                 lines.append("| --- | --- |")
                 for entry in report.deviceRanking {
                     // 机型来自设备固件，理论上是自由文本，竖线需转义否则会撑破表格。
-                    let device = entry.device.replacingOccurrences(of: "|", with: "\\|")
-                    lines.append("| \(device) | \(entry.count) |")
+                    lines.append("| \(markdownCell(entry.device)) | \(entry.count) |")
                 }
                 lines.append("")
             }
@@ -163,7 +162,7 @@ enum ReportExporter {
                 lines.append("| --- | --- |")
                 for entry in report.mediaFolderRanking.prefix(200) {
                     let folder = entry.folder.isEmpty ? "（目标根目录）" : entry.folder
-                    lines.append("| `\(folder)` | \(entry.count) |")
+                    lines.append("| `\(markdownCell(folder))` | \(entry.count) |")
                 }
                 lines.append("")
             }
@@ -180,7 +179,7 @@ enum ReportExporter {
             lines.append("| 失败 | \(report.transcodeFailedFiles) 个 |")
             lines.append("| 输入总量 | \(Format.bytes(report.transcodeInputBytes)) |")
             lines.append("| 输出总量 | \(Format.bytes(report.transcodeOutputBytes)) |")
-            lines.append("| 压缩比 | \(report.transcodeCompressionRatio > 0 ? Format.percent(report.transcodeCompressionRatio) : "—") |")
+            lines.append("| 压缩比 | \(report.transcodeCompressionRatio > 0 ? Format.ratio(report.transcodeCompressionRatio) : "—") |")
             lines.append("| 节省空间 | \(Format.bytes(report.transcodeSavedBytes)) |")
             lines.append("| 硬件加速 | \(report.transcodeHardwareFiles) 个 |")
             lines.append("| 转码耗时 | \(Format.duration(report.transcodeDuration)) |")
@@ -199,8 +198,8 @@ enum ReportExporter {
                 lines.append("| 文件 | 预设 | 原因 |")
                 lines.append("| --- | --- | --- |")
                 for record in report.transcodeFailures.prefix(200) {
-                    let message = (record.transcode?.message ?? "—").replacingOccurrences(of: "|", with: "\\|")
-                    lines.append("| `\(record.relativePath)` | \(record.transcode?.presetName ?? "—") | \(message) |")
+                    let message = markdownCell(record.transcode?.message ?? "—")
+                    lines.append("| `\(markdownCell(record.relativePath))` | \(markdownCell(record.transcode?.presetName ?? "—")) | \(message) |")
                 }
                 lines.append("")
             }
@@ -215,7 +214,7 @@ enum ReportExporter {
                     guard let transcode = record.transcode else { continue }
                     let outputName = transcode.outputPath.map { ($0 as NSString).lastPathComponent } ?? "—"
                     let speed = transcode.speed > 0 ? String(format: "%.1f×", transcode.speed) : "—"
-                    lines.append("| `\(record.relativePath)` | `\(outputName)` | \(Format.bytes(transcode.inputBytes)) | \(Format.bytes(transcode.outputBytes)) | \(transcode.ratioText) | \(transcode.resolutionText) | \(transcode.videoCodec ?? "—") | \(speed) |")
+                    lines.append("| `\(markdownCell(record.relativePath))` | `\(markdownCell(outputName))` | \(Format.bytes(transcode.inputBytes)) | \(Format.bytes(transcode.outputBytes)) | \(transcode.ratioText) | \(transcode.resolutionText) | \(markdownCell(transcode.videoCodec ?? "—")) | \(speed) |")
                 }
                 lines.append("")
             }
@@ -227,7 +226,7 @@ enum ReportExporter {
             lines.append("| 文件 | 源摘要 | 目标摘要 |")
             lines.append("| --- | --- | --- |")
             for record in report.mismatches.prefix(200) {
-                lines.append("| `\(record.relativePath)` | `\(record.sourceDigest ?? "—")` | `\(record.destinationDigest ?? "—")` |")
+                lines.append("| `\(markdownCell(record.relativePath))` | `\(record.sourceDigest ?? "—")` | `\(record.destinationDigest ?? "—")` |")
             }
             lines.append("")
         }
@@ -238,7 +237,7 @@ enum ReportExporter {
             lines.append("| 文件 | 大小 | 原因 |")
             lines.append("| --- | --- | --- |")
             for record in report.failures.prefix(200) {
-                lines.append("| `\(record.relativePath)` | \(Format.bytes(record.size)) | \(record.message ?? "—") |")
+                lines.append("| `\(markdownCell(record.relativePath))` | \(Format.bytes(record.size)) | \(markdownCell(record.message ?? "—")) |")
             }
             lines.append("")
         }
@@ -258,9 +257,9 @@ enum ReportExporter {
         for (index, record) in report.records.enumerated() {
             let digest = record.sourceDigest.map { String($0.prefix(16)) } ?? "—"
             if showArchive {
-                lines.append("| \(index + 1) | `\(record.relativePath)` | \(captureText(record.captureDate)) | \(record.captureSource?.displayName ?? "—") | \(record.mediaKind?.displayName ?? "—") | \(Format.bytes(record.size)) | \(record.status.displayName) | `\(digest)` |")
+                lines.append("| \(index + 1) | `\(markdownCell(record.relativePath))` | \(captureText(record.captureDate)) | \(record.captureSource?.displayName ?? "—") | \(record.mediaKind?.displayName ?? "—") | \(Format.bytes(record.size)) | \(record.status.displayName) | `\(digest)` |")
             } else {
-                lines.append("| \(index + 1) | `\(record.relativePath)` | \(Format.bytes(record.size)) | \(record.status.displayName) | \(Format.duration(record.duration)) | \(Format.speed(record.bytesPerSecond)) | `\(digest)` |")
+                lines.append("| \(index + 1) | `\(markdownCell(record.relativePath))` | \(Format.bytes(record.size)) | \(record.status.displayName) | \(Format.duration(record.duration)) | \(Format.speed(record.bytesPerSecond)) | `\(digest)` |")
             }
         }
         lines.append("")
@@ -299,7 +298,7 @@ enum ReportExporter {
         lines.append("| 转码失败 | \(report.transcodeFailedFiles) |")
         lines.append("| 输入总量 | \(Format.bytes(report.transcodeInputBytes)) |")
         lines.append("| 输出总量 | \(Format.bytes(report.transcodeOutputBytes)) |")
-        lines.append("| 压缩比 | \(report.transcodeCompressionRatio > 0 ? Format.percent(report.transcodeCompressionRatio) : "—") |")
+        lines.append("| 压缩比 | \(report.transcodeCompressionRatio > 0 ? Format.ratio(report.transcodeCompressionRatio) : "—") |")
         lines.append("| 节省空间 | \(Format.bytes(report.transcodeSavedBytes)) |")
         lines.append("| 硬件加速 | \(report.transcodeHardwareFiles) 个 |")
         lines.append("| 转码耗时 | \(Format.duration(report.transcodeDuration)) |")
@@ -362,7 +361,7 @@ enum ReportExporter {
         lines.append("# 数据拷贝报告：\(csvEscape(report.taskName))")
         lines.append("# 开始,\(Format.timestamp(report.startedAt)),结束,\(Format.timestamp(report.finishedAt)),总耗时,\(Format.duration(report.elapsed))")
         lines.append("# 拷贝预设,\(csvEscape(report.preset.displayName))")
-        lines.append("# 计划文件数,\(report.totalFiles),成功,\(report.copiedFiles),跳过,\(report.skippedFiles),失败,\(report.failedFiles),校验不一致,\(report.verifyFailedFiles)")
+        lines.append("# 计划文件数,\(report.totalFiles),成功,\(report.succeededCopyFiles),跳过,\(report.skippedFiles),失败,\(report.readWriteFailedFiles),校验不一致,\(report.verifyFailedFiles)")
         lines.append("# 平均速度,\(Format.speed(report.averageBytesPerSecond)),峰值速度,\(Format.speed(report.peakBytesPerSecond))")
         if report.isMediaArchive {
             lines.append("# 排除非照片/视频,\(report.filteredOutFiles),按拍摄时间重命名,\(report.renamedFiles)")
@@ -435,6 +434,17 @@ enum ReportExporter {
         return value
     }
 
+    /// Markdown 表格单元格转义。
+    ///
+    /// 文件名、错误消息、机型名都是自由文本：竖线会撑破表格结构，换行会截断整行
+    /// （macOS 允许文件名含换行，ffmpeg 的错误消息也常带换行）。
+    private static func markdownCell(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
     // MARK: - JSON
 
     static func json(_ report: TaskReport) throws -> String {
@@ -448,6 +458,9 @@ enum ReportExporter {
     /// 生成默认文件名，例如 `任务名-report-20260912-1620.md`
     static func suggestedFileName(for report: TaskReport, format: ReportExportFormat) -> String {
         let formatter = DateFormatter()
+        // 固定公历 + POSIX 区域，避免非公历地区用户拿到非公历年份的日期串。
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyyMMdd-HHmm"
         let base = Format.safeFileName(report.taskName)
         return "\(base)-report-\(formatter.string(from: report.finishedAt)).\(format.fileExtension)"

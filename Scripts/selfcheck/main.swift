@@ -1977,6 +1977,184 @@ func checkCopyPresets() {
         expect(mixedParts.first?.label == "已拷贝", "成功段排在环形图首位")
     }
 
+    // ---- 展示口径一致性：卡片 / 摘要 / 导出不得重复累计校验不一致 ----
+    //
+    // 环形图已正确扣除，但界面卡片、摘要文本、Markdown 与 CSV 曾直接并列原始值，
+    // 导致「成功 + 跳过 + 失败 + 校验不一致」加总超过计划文件数。这里锁死派生口径。
+    do {
+        var mixed = report
+        mixed.totalFiles = 12
+        mixed.copiedFiles = 9            // 7 成功 + 2 校验不一致
+        mixed.verifyFailedFiles = 2
+        mixed.failedFiles = 5            // 2 校验不一致 + 3 纯失败
+        mixed.skippedFiles = 0
+
+        expect(mixed.succeededCopyFiles == 7, "派生：成功拷贝数已扣除校验不一致",
+               detail: "\(mixed.succeededCopyFiles)")
+        expect(mixed.readWriteFailedFiles == 3, "派生：读写失败数已扣除校验不一致",
+               detail: "\(mixed.readWriteFailedFiles)")
+        expect(mixed.succeededCopyFiles + mixed.skippedFiles
+               + mixed.readWriteFailedFiles + mixed.verifyFailedFiles == mixed.totalFiles,
+               "派生口径四段加总等于计划文件数",
+               detail: "\(mixed.succeededCopyFiles + mixed.skippedFiles + mixed.readWriteFailedFiles + mixed.verifyFailedFiles) / \(mixed.totalFiles)")
+
+        // 摘要文本必须报「失败 3」而不是原始的「失败 5」
+        expect(mixed.summaryLine.contains("失败 3"), "摘要文本失败数使用已扣除口径",
+               detail: mixed.summaryLine)
+        expect(!mixed.summaryLine.contains("失败 5"), "摘要文本不再出现重复累计的失败数",
+               detail: mixed.summaryLine)
+
+        // Markdown 统计表同样不得并列原始值
+        let markdown = ReportExporter.markdown(mixed)
+        expect(markdown.contains("| 成功拷贝 | 7 |"), "Markdown 成功拷贝使用已扣除口径")
+        expect(markdown.contains("| 失败 | 3 |"), "Markdown 失败使用已扣除口径")
+        expect(!markdown.contains("| 失败 | 5 |"), "Markdown 不再输出重复累计的失败数")
+
+        // CSV 汇总行同样
+        let csv = ReportExporter.csv(mixed)
+        expect(csv.contains("成功,7,"), "CSV 成功数使用已扣除口径")
+        expect(csv.contains("失败,3,"), "CSV 失败数使用已扣除口径")
+        expect(!csv.contains("失败,5,"), "CSV 不再输出重复累计的失败数")
+    }
+
+    // ---- 损坏持久化文件的留档 ----
+    //
+    // 任务文件解析失败后若按空列表覆盖写盘，用户数据会永久丢失。
+    // 留档动作用改名实现：原文件必须消失、备份必须出现且文件名带时间戳标记。
+    do {
+        let dir = sandbox.appendingPathComponent("corrupt")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let broken = dir.appendingPathComponent("tasks.json")
+        try? Data("{ 这不是合法 JSON".utf8).write(to: broken)
+
+        let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let expectedName = CorruptFileBackup.backupURL(for: broken, now: fixedNow).lastPathComponent
+        expect(expectedName.hasPrefix("tasks.json.corrupt-"),
+               "留档文件名带 corrupt 时间戳标记",
+               detail: expectedName)
+        expect(!expectedName.contains(":"), "留档文件名不含冒号（跨卷合法）",
+               detail: expectedName)
+
+        let backup = CorruptFileBackup.quarantine(broken, now: fixedNow)
+        expect(backup != nil, "损坏文件可被改名留档")
+        expect(!fm.fileExists(atPath: broken.path), "留档后原路径不再存在")
+        expect(backup.map { fm.fileExists(atPath: $0.path) } == true, "留档文件确实落盘")
+        expect(backup?.lastPathComponent == expectedName, "留档文件名与预期一致",
+               detail: backup?.lastPathComponent ?? "nil")
+
+        // 文件不存在时不该虚构备份
+        expect(CorruptFileBackup.quarantine(dir.appendingPathComponent("absent.json")) == nil,
+               "文件不存在时不产生留档")
+    }
+
+    // ---- 宽容解码：任务相关结构缺字段时不得整份解析失败 ----
+    //
+    // 合成解码器要求所有键存在，给这些结构新增一个字段就会让旧任务文件整体解析失败，
+    // 连带整个任务列表读不出来。这里锁死「缺字段回退默认值」与「完整往返无损」。
+    do {
+        let partialOptions = """
+        {"algorithm":"sha256","concurrency":7}
+        """
+        if let options = try? JSONDecoder().decode(TaskOptions.self, from: Data(partialOptions.utf8)) {
+            expect(options.algorithm == .sha256 && options.concurrency == 7,
+                   "TaskOptions 已给出的字段被采用")
+            expect(options.verifyAfterCopy == TaskOptions().verifyAfterCopy,
+                   "TaskOptions 缺失的布尔字段回退默认值")
+            expect(options.excludedNames == TaskOptions().excludedNames,
+                   "TaskOptions 缺失的数组回退默认值")
+            expect(options.copyPreset == .everything, "TaskOptions 缺失的预设回退默认值")
+        } else {
+            expect(false, "TaskOptions 可宽容解码缺字段的旧文件")
+        }
+
+        if let task = try? JSONDecoder().decode(CopyTask.self, from: Data("{\"name\":\"半截任务\"}".utf8)) {
+            expect(task.name == "半截任务", "CopyTask 已给出的字段被采用")
+            expect(task.sources.isEmpty && task.destination.isEmpty,
+                   "CopyTask 缺失的必填字符串回退为空")
+            expect(task.state == .idle && task.taskKind == .copy,
+                   "CopyTask 缺失的状态与类型回退默认值")
+        } else {
+            expect(false, "CopyTask 可宽容解码缺字段的记录")
+        }
+
+        if let record = try? JSONDecoder().decode(
+            FileRecord.self, from: Data("{\"relativePath\":\"a/b.jpg\",\"size\":12}".utf8)) {
+            expect(record.relativePath == "a/b.jpg" && record.size == 12,
+                   "FileRecord 已给出的字段被采用")
+            expect(record.status == .planned, "FileRecord 缺失的状态回退待处理")
+            expect(record.verified == false && record.duration == 0,
+                   "FileRecord 缺失的数值字段回退默认值")
+        } else {
+            expect(false, "FileRecord 可宽容解码缺字段的记录")
+        }
+
+        // 完整往返：CodingKeys 若有遗漏，这里会立刻暴露为字段丢失。
+        var richOptions = TaskOptions.default
+        richOptions.copyPreset = .media
+        richOptions.concurrency = 9
+        richOptions.excludedNames = ["X"]
+        richOptions.transcodeSettings.enabled = true
+        var richTask = CopyTask(name: "往返", sources: ["/a", "/b"],
+                                destination: "/c", options: richOptions)
+        richTask.kind = .transcode
+        richTask.state = .finished
+        if let data = try? JSONEncoder().encode(richTask),
+           let back = try? JSONDecoder().decode(CopyTask.self, from: data) {
+            expect(back.name == richTask.name && back.sources == richTask.sources
+                   && back.destination == richTask.destination, "CopyTask 往返保留基本字段")
+            expect(back.options == richTask.options, "CopyTask 往返保留全部选项字段")
+            expect(back.kind == .transcode && back.state == .finished,
+                   "CopyTask 往返保留任务类型与状态")
+        } else {
+            expect(false, "CopyTask 编码解码往返成功")
+        }
+
+        let richRecord = FileRecord(
+            relativePath: "p/q.jpg", sourcePath: "/s/q.jpg", destinationPath: "/d/q.jpg",
+            size: 42, status: .verifyFailed, sourceDigest: "aa", destinationDigest: "bb",
+            duration: 1.5, bytesPerSecond: 3, message: "m", verified: true,
+            captureDate: Date(timeIntervalSince1970: 0), captureSource: .exif,
+            mediaKind: .photo, deviceModel: "Canon", originalName: "q.jpg")
+        if let data = try? JSONEncoder().encode(richRecord),
+           let back = try? JSONDecoder().decode(FileRecord.self, from: data) {
+            expect(back == richRecord, "FileRecord 往返完全一致（含 CodingKeys 完整性）")
+        } else {
+            expect(false, "FileRecord 编码解码往返成功")
+        }
+    }
+
+    // ---- 体积/压缩比不得被裁剪到 100% ----
+    do {
+        expect(Format.ratio(1.5) == "150.0%", "压缩比如实显示膨胀到 150% 的输出",
+               detail: Format.ratio(1.5))
+        expect(Format.ratio(0.42) == "42.0%", "压缩比正常显示缩小比例", detail: Format.ratio(0.42))
+        expect(Format.percent(1.5) == "100.0%", "进度占比仍裁剪到 100%",
+               detail: Format.percent(1.5))
+        expect(Format.percent(-0.2) == "0.0%", "进度占比下限仍为 0%",
+               detail: Format.percent(-0.2))
+    }
+
+    // ---- Markdown 单元格转义：竖线与换行不得撑破表格 ----
+    do {
+        var escaped = report
+        escaped.totalFiles = 1
+        escaped.copiedFiles = 1
+        escaped.failedFiles = 1
+        escaped.records = [
+            FileRecord(relativePath: "a|b\nc.jpg", sourcePath: "/s", destinationPath: "/d",
+                       size: 1, status: .failed, message: "第一行|第二行\n第三行")
+        ]
+        let markdown = ReportExporter.markdown(escaped)
+        expect(markdown.contains("a\\|b c.jpg"), "明细行文件名中的竖线与换行被转义",
+               detail: markdown.split(separator: "\n").last.map(String.init) ?? "")
+        expect(markdown.contains("第一行\\|第二行 第三行"), "失败原因中的竖线与换行被转义")
+        // 换行若未转义会把一条记录拆成多行、撑破表格；这里确认整条仍在同一行内。
+        let row = markdown.split(separator: "\n").first { $0.contains("第一行") }
+        expect(row?.contains("第三行") == true && row?.contains("a\\|b c.jpg") == true,
+               "转义后失败明细仍完整落在同一行内",
+               detail: row.map(String.init) ?? "缺失")
+    }
+
     // 只含单段的样张看不出图例与占比的排布，另留一份四段齐全的样张供人眼确认。
     do {
         var mixedSample = report
@@ -2018,6 +2196,23 @@ func checkCopyPresets() {
                detail: restored?.customRenamePrefix ?? "nil")
     }
 
+    // 往返回归：自定义前缀必须能「编码后解码还原」（曾漏在 init(from:) 之外被静默清空）
+    do {
+        var settings = MediaImportSettings()
+        settings.customRenamePrefix = "婚礼"
+        settings.renameMode = .customWithTimestamp
+        if let data = try? JSONEncoder().encode(settings),
+           let restored = try? JSONDecoder().decode(MediaImportSettings.self, from: data) {
+            expect(restored.customRenamePrefix == "婚礼",
+                   "自定义前缀经 JSON 往返还原",
+                   detail: restored.customRenamePrefix)
+            expect(restored.renameMode == .customWithTimestamp,
+                   "自定义命名方式经 JSON 往返还原")
+        } else {
+            expect(false, "自定义前缀往返编解码成功")
+        }
+    }
+
     // ---- USB 设备类型推断：卷名关键词优先，其次按容量分档 ----
     expect(USBDevice.kind(volumeName: "EOS_DIGITAL", totalCapacity: 64 * 1024 * 1024 * 1024)
            == "相机存储卡", "USB 类型：相机卡卷名命中")
@@ -2027,6 +2222,22 @@ func checkCopyPresets() {
     expect(USBDevice.kind(volumeName: "UNTITLED", totalCapacity: 32 * 1024 * 1024 * 1024)
            == "U盘", "USB 类型：小容量无名卷判 U 盘",
            detail: USBDevice.kind(volumeName: "UNTITLED", totalCapacity: 32 * 1024 * 1024 * 1024))
+
+    // 短缩写必须按词元匹配：`BackupsDisk`、`GamesDisk` 里的中段 `sd` 不是存储卡。
+    expect(USBDevice.kind(volumeName: "BackupsDisk", totalCapacity: 32 * 1024 * 1024 * 1024)
+           == "U盘", "USB 类型：卷名中段出现 sd 不误判为相机卡",
+           detail: USBDevice.kind(volumeName: "BackupsDisk", totalCapacity: 32 * 1024 * 1024 * 1024))
+    expect(USBDevice.kind(volumeName: "GamesDisk", totalCapacity: 32 * 1024 * 1024 * 1024)
+           == "U盘", "USB 类型：GamesDisk 不误判为相机卡",
+           detail: USBDevice.kind(volumeName: "GamesDisk", totalCapacity: 32 * 1024 * 1024 * 1024))
+    expect(USBDevice.kind(volumeName: "SD_CARD", totalCapacity: 32 * 1024 * 1024 * 1024)
+           == "相机存储卡", "USB 类型：SD_CARD 词元命中")
+    expect(USBDevice.kind(volumeName: "SDcard", totalCapacity: 32 * 1024 * 1024 * 1024)
+           == "相机存储卡", "USB 类型：SDcard 前缀命中")
+    expect(USBDevice.kind(volumeName: "SanDisk", totalCapacity: 64 * 1024 * 1024 * 1024)
+           == "相机存储卡", "USB 类型：SanDisk 长关键词命中")
+    expect(USBDevice.kind(volumeName: "CFexpress", totalCapacity: 64 * 1024 * 1024 * 1024)
+           == "相机存储卡", "USB 类型：CFexpress 前缀命中")
 
     // ---- USB 设备名扫描：插入设备后从卡内媒体文件读取型号 ----
     do {
@@ -2100,6 +2311,73 @@ func checkCopyPresets() {
         expect(!(plainReport.isMediaArchive), "全量任务不判定为归档")
     } else {
         expect(false, "全量拷贝任务执行完成")
+    }
+
+    // ---- 同名来源根：不得静默丢文件 ----
+    //
+    // 两张卡都叫 Photos 时，相对路径都从「Photos/」开始，过去的去重逻辑会把
+    // 后一个来源的文件整批丢弃且不计入任何统计——对拷贝工具是不可接受的隐性缺失。
+    do {
+        var dupOptions = TaskOptions.default
+        dupOptions.copyPreset = .everything
+        dupOptions.algorithm = .none
+
+        let rootA = sandbox.appendingPathComponent("dupRootA")
+        let rootB = sandbox.appendingPathComponent("dupRootB")
+        for (root, files) in [(rootA, ["a.jpg", "b.jpg"]), (rootB, ["a.jpg"])] {
+            let photos = root.appendingPathComponent("Photos")
+            try? fm.createDirectory(at: photos, withIntermediateDirectories: true)
+            for file in files {
+                try? "x".write(to: photos.appendingPathComponent(file),
+                               atomically: true, encoding: .utf8)
+            }
+        }
+
+        let dupDestination = sandbox.appendingPathComponent("dupdst")
+        try? fm.createDirectory(at: dupDestination, withIntermediateDirectories: true)
+
+        let dupTask = CopyTask(name: "同名来源",
+                               sources: [rootA.appendingPathComponent("Photos").path,
+                                         rootB.appendingPathComponent("Photos").path],
+                               destination: dupDestination.path,
+                               options: dupOptions)
+        if let dupPlan = try? FilePlanner.plan(dupTask, cancellation: Cancellation()) {
+            let relatives = dupPlan.items.map { $0.relativePath }
+            expect(dupPlan.items.count == 3, "同名来源根的文件全部进入计划",
+                   detail: "计划 \(dupPlan.items.count) 个，预期 3 个")
+            expect(relatives.contains("Photos/a.jpg") && relatives.contains("Photos/b.jpg"),
+                   "第一个来源保留原名目录",
+                   detail: relatives.sorted().joined(separator: "、"))
+            expect(relatives.contains("Photos 2/a.jpg"), "第二个同名来源根自动加区分后缀",
+                   detail: relatives.sorted().joined(separator: "、"))
+            let destinations = Set(dupPlan.items.map { $0.destinationPath.lowercased() })
+            expect(destinations.count == dupPlan.items.count, "计划内目标路径互不重复")
+        } else {
+            expect(false, "同名来源根规划成功")
+        }
+
+        // ---- 连续同名：第 3 个应得 `a_3.jpg`，而不是词干累积的 `a_2_3.jpg` ----
+        let tripleRoot = sandbox.appendingPathComponent("triple")
+        var tripleSources: [String] = []
+        for name in ["t1", "t2", "t3"] {
+            let dir = tripleRoot.appendingPathComponent(name)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("same.jpg")
+            try? "x".write(to: file, atomically: true, encoding: .utf8)
+            tripleSources.append(file.path)
+        }
+        let tripleDestination = sandbox.appendingPathComponent("tripledst")
+        try? fm.createDirectory(at: tripleDestination, withIntermediateDirectories: true)
+        let tripleTask = CopyTask(name: "三重同名", sources: tripleSources,
+                                  destination: tripleDestination.path, options: dupOptions)
+        if let triplePlan = try? FilePlanner.plan(tripleTask, cancellation: Cancellation()) {
+            let names = Set(triplePlan.items.map { ($0.relativePath as NSString).lastPathComponent })
+            expect(names == ["same.jpg", "same_2.jpg", "same_3.jpg"],
+                   "连续同名文件的序号逐级递增而不累积",
+                   detail: names.sorted().joined(separator: "、"))
+        } else {
+            expect(false, "连续同名规划成功")
+        }
     }
 
     // ---- 仅时间戳模式：同一秒必然撞名，只能靠序号区分 ----

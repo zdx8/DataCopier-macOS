@@ -128,7 +128,8 @@ enum PDFReportRenderer {
 
         let canvas = Canvas(context: context)
         render(report, into: canvas)
-        canvas.finish()
+        // `render` 末尾已调用 canvas.finish()（结束当前页并关闭 PDF 上下文），
+        // 这里不可再调一次——那会在已关闭的上下文上继续绘制。
 
         return output.length > 0 ? output as Data : nil
     }
@@ -211,11 +212,11 @@ enum PDFReportRenderer {
 
         var cards: [Canvas.Card] = [
             Canvas.Card(title: "计划文件", value: "\(report.totalFiles)", unit: "个"),
-            Canvas.Card(title: "已拷贝", value: "\(report.copiedFiles)", unit: "个",
-                        tint: report.copiedFiles > 0 ? Palette.good : Palette.ink),
+            Canvas.Card(title: "已拷贝", value: "\(report.succeededCopyFiles)", unit: "个",
+                        tint: report.succeededCopyFiles > 0 ? Palette.good : Palette.ink),
             Canvas.Card(title: "跳过", value: "\(report.skippedFiles)", unit: "个"),
-            Canvas.Card(title: "失败", value: "\(report.failedFiles)", unit: "个",
-                        tint: report.failedFiles > 0 ? Palette.bad : Palette.ink),
+            Canvas.Card(title: "失败", value: "\(report.readWriteFailedFiles)", unit: "个",
+                        tint: report.readWriteFailedFiles > 0 ? Palette.bad : Palette.ink),
             Canvas.Card(title: "校验不一致", value: "\(report.verifyFailedFiles)", unit: "个",
                         tint: report.verifyFailedFiles > 0 ? Palette.bad : Palette.ink),
             Canvas.Card(title: "数据量", value: Format.bytes(report.totalBytes)),
@@ -260,8 +261,8 @@ enum PDFReportRenderer {
     static func outcomeSegments(for report: TaskReport)
         -> [(label: String, value: Double, color: CGColor)] {
         let verifyFailed = report.verifyFailedFiles
-        let succeeded = max(0, report.copiedFiles - verifyFailed)
-        let failedOnly = max(0, report.failedFiles - verifyFailed)
+        let succeeded = report.succeededCopyFiles
+        let failedOnly = report.readWriteFailedFiles
 
         var parts: [(label: String, value: Double, color: CGColor)] = []
         if succeeded > 0 { parts.append(("已拷贝", Double(succeeded), Palette.good)) }
@@ -421,7 +422,7 @@ enum PDFReportRenderer {
         ], total: Double(max(input, output)), distinctColors: true,
            valueText: { Format.bytes(Int64($0)) })
         canvas.space(6)
-        canvas.text("压缩比 \(Format.percent(report.transcodeCompressionRatio))"
+        canvas.text("压缩比 \(Format.ratio(report.transcodeCompressionRatio))"
                     + "　·　节省 \(Format.bytes(report.transcodeSavedBytes))",
                     top: canvas.cursor, size: 9, color: Palette.muted)
         canvas.space(18)
@@ -547,7 +548,10 @@ enum PDFReportRenderer {
         }
 
         private func drawFooter() {
-            let ruleY = Layout.pageHeight - Layout.margin - 10
+            // 页脚在页面底部。这里必须走与正文一致的坐标换算：
+            // 页脚文本 top = pageHeight - margin - 4，对应 CG y = margin + 4；
+            // 分隔线取其上方 6pt，即 CG y = margin + 10。
+            let ruleY = Layout.margin + 10
             context.setStrokeColor(Palette.rule)
             context.setLineWidth(0.5)
             context.move(to: CGPoint(x: Layout.margin, y: ruleY))

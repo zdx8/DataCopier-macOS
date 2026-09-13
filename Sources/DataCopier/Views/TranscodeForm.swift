@@ -40,12 +40,12 @@ struct TranscodeForm: View {
             }
         }
         .task {
-            let result = await Task.detached(priority: .utility) { () -> (String?, String?) in
-                guard let url = FFmpegLocator.locate() else { return (nil, nil) }
-                return (url.path, FFmpegLocator.version(of: url))
+            // 探测结果带缓存：切换详情页分区、重复打开表单都不会反复起子进程。
+            let probe = await Task.detached(priority: .utility) {
+                FFmpegLocator.probe()
             }.value
-            ffmpegPath = result.0
-            ffmpegVersion = result.1
+            ffmpegPath = probe.path
+            ffmpegVersion = probe.version
             probeFinished = true
         }
     }

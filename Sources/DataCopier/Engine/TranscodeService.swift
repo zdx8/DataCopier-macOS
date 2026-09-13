@@ -106,8 +106,9 @@ enum FFmpegLocator {
             } else {
                 UserDefaults.standard.removeObject(forKey: overrideDefaultsKey)
             }
-            // 换了解释器，之前缓存的编码器清单随即失效。
+            // 换了解释器，之前缓存的编码器清单与探测结果随即失效。
             FFmpegCapability.invalidate()
+            invalidateProbe()
         }
     }
 
@@ -158,6 +159,48 @@ enum FFmpegLocator {
     }
 
     static var isAvailable: Bool { locate() != nil }
+
+    /// FFmpeg 探测结果（可执行文件路径 + 版本号）。
+    struct Probe: Sendable, Equatable {
+        var path: String?
+        var version: String?
+    }
+
+    private static let probeLock = NSLock()
+    private static var cachedProbe: Probe?
+
+    /// 探测 FFmpeg 路径与版本，结果带缓存。
+    ///
+    /// 每次表单出现都重新 fork `ffmpeg -version` 代价明显（切换详情页分区、
+    /// 每次打开设置都会触发），而解释器在进程内基本不变，因此缓存首次结果。
+    /// - Parameter refresh: 传 `true` 强制重新探测。
+    static func probe(refresh: Bool = false) -> Probe {
+        probeLock.lock()
+        if !refresh, let cachedProbe {
+            probeLock.unlock()
+            return cachedProbe
+        }
+        probeLock.unlock()
+
+        let resolved: Probe
+        if let url = locate() {
+            resolved = Probe(path: url.path, version: version(of: url))
+        } else {
+            resolved = Probe(path: nil, version: nil)
+        }
+
+        probeLock.lock()
+        cachedProbe = resolved
+        probeLock.unlock()
+        return resolved
+    }
+
+    /// 清除探测缓存。更换解释器路径后必须调用，否则界面会一直显示旧版本。
+    static func invalidateProbe() {
+        probeLock.lock()
+        cachedProbe = nil
+        probeLock.unlock()
+    }
 
     /// 读取 `ffmpeg -version` 首行中的版本号。
     static func version(of executable: URL) -> String? {

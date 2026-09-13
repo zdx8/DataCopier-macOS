@@ -5,6 +5,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarController = MenuBarController()
     private let windowCloseDelegate = MainWindowCloseDelegate()
 
+    /// 窗口成为 key 的观察者 token；持有它以便退出时移除。
+    private var keyWindowObserver: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 通过 SwiftPM 打包的非 Xcode 应用需要显式声明为常规前台应用，
         // 否则从命令行启动时不会出现在 Dock 与程序切换器中。
@@ -14,15 +17,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 菜单栏常驻图标：应用随时可从这里被唤起或退出。
         menuBarController.install()
 
-        // SwiftUI WindowGroup 没有暴露关窗回调，这里在主窗口就绪后
-        // 挂上关闭拦截 delegate（窗口标题与 WindowGroup 名称一致）。
-        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
-                                               object: nil,
-                                               queue: .main) { [weak self] note in
+        // SwiftUI WindowGroup 没有暴露关窗回调，这里在主窗口就绪后挂上关闭拦截
+        // delegate。窗口用结构判定（见 MainWindow），不再依赖标题字符串。
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
             guard let self, let window = note.object as? NSWindow else { return }
-            guard window.title == "数据拷贝", window.delegate == nil else { return }
-            window.delegate = self.windowCloseDelegate
+            self.installCloseInterception(on: window)
         }
+
+        // 兜底：观察者注册前窗口可能已就绪，直接尝试挂一次。
+        if let window = MainWindow.standard {
+            installCloseInterception(on: window)
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let keyWindowObserver {
+            NotificationCenter.default.removeObserver(keyWindowObserver)
+            self.keyWindowObserver = nil
+        }
+    }
+
+    /// 给主窗口挂关闭拦截；面板与工作表（sheet）跳过。
+    private func installCloseInterception(on window: NSWindow) {
+        guard MainWindow.isCandidate(window) else { return }
+        windowCloseDelegate.attach(to: window)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -455,6 +455,8 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
             ?? fallback.renameByCaptureTime
         renameMode = try container.decodeIfPresent(MediaRenameMode.self, forKey: .renameMode)
             ?? fallback.renameMode
+        customRenamePrefix = try container.decodeIfPresent(String.self, forKey: .customRenamePrefix)
+            ?? fallback.customRenamePrefix
         folderGranularity = try container.decodeIfPresent(MediaFolderGranularity.self, forKey: .folderGranularity)
             ?? fallback.folderGranularity
         folderSuffix = try container.decodeIfPresent(String.self, forKey: .folderSuffix)
@@ -610,6 +612,17 @@ struct TaskOptions: Codable, Hashable, Sendable {
         set { media = newValue }
     }
 
+    // MARK: 宽容解码
+    //
+    // 合成的解码器要求所有键都存在，任何一次「新增字段」都会让旧任务文件整体解析失败，
+    // 进而连带整个任务列表读不出来。逐字段 decodeIfPresent，缺失的键回退默认值。
+    // 解码实现放在扩展里，以保留成员初始化器（`TaskOptions()` 等调用点依赖它）。
+    private enum CodingKeys: String, CodingKey {
+        case algorithm, verifyAfterCopy, conflictPolicy, preserveMetadata
+        case copySymlinksAsLinks, concurrency, bufferSize, excludedNames
+        case exportManifest, maxRecordedEntries, transcode, preset, media
+    }
+
     static let `default` = TaskOptions()
 
     /// 切换预设时同步套用一组经过验证的推荐值。
@@ -636,6 +649,38 @@ struct TaskOptions: Codable, Hashable, Sendable {
         }
 
         return options
+    }
+}
+
+extension TaskOptions {
+    /// 宽容解码：缺失的键一律回退到默认值，避免旧任务文件整体解析失败。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = TaskOptions()
+
+        algorithm = try container.decodeIfPresent(CheckAlgorithm.self, forKey: .algorithm)
+            ?? fallback.algorithm
+        verifyAfterCopy = try container.decodeIfPresent(Bool.self, forKey: .verifyAfterCopy)
+            ?? fallback.verifyAfterCopy
+        conflictPolicy = try container.decodeIfPresent(ConflictPolicy.self, forKey: .conflictPolicy)
+            ?? fallback.conflictPolicy
+        preserveMetadata = try container.decodeIfPresent(Bool.self, forKey: .preserveMetadata)
+            ?? fallback.preserveMetadata
+        copySymlinksAsLinks = try container.decodeIfPresent(Bool.self, forKey: .copySymlinksAsLinks)
+            ?? fallback.copySymlinksAsLinks
+        concurrency = try container.decodeIfPresent(Int.self, forKey: .concurrency)
+            ?? fallback.concurrency
+        bufferSize = try container.decodeIfPresent(Int.self, forKey: .bufferSize)
+            ?? fallback.bufferSize
+        excludedNames = try container.decodeIfPresent([String].self, forKey: .excludedNames)
+            ?? fallback.excludedNames
+        exportManifest = try container.decodeIfPresent(Bool.self, forKey: .exportManifest)
+            ?? fallback.exportManifest
+        maxRecordedEntries = try container.decodeIfPresent(Int.self, forKey: .maxRecordedEntries)
+            ?? fallback.maxRecordedEntries
+        transcode = try container.decodeIfPresent(TranscodeSettings.self, forKey: .transcode)
+        preset = try container.decodeIfPresent(CopyPreset.self, forKey: .preset)
+        media = try container.decodeIfPresent(MediaImportSettings.self, forKey: .media)
     }
 }
 
@@ -686,6 +731,31 @@ struct CopyTask: Identifiable, Codable, Sendable {
     var sourcesDisplay: String {
         if sources.count == 1 { return (sources[0] as NSString).lastPathComponent }
         return "\(sources.count) 个来源"
+    }
+
+    // MARK: 宽容解码
+    // 逐字段 decodeIfPresent，缺失的键回退默认值，避免新增字段后旧任务文件解析失败。
+    // 解码实现放在扩展里，以保留成员初始化器。
+    private enum CodingKeys: String, CodingKey {
+        case id, name, sources, destination, options
+        case createdAt, state, kind, lastReport
+    }
+}
+
+extension CopyTask {
+    /// 宽容解码：缺失字段回退默认值，宁可读出「信息不全的任务」也不整份任务列表丢失。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "未命名任务"
+        sources = try container.decodeIfPresent([String].self, forKey: .sources) ?? []
+        destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? ""
+        options = try container.decodeIfPresent(TaskOptions.self, forKey: .options) ?? .default
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        state = try container.decodeIfPresent(TaskState.self, forKey: .state) ?? .idle
+        kind = try container.decodeIfPresent(TaskKind.self, forKey: .kind)
+        lastReport = try container.decodeIfPresent(TaskReport.self, forKey: .lastReport)
     }
 }
 
@@ -756,6 +826,49 @@ struct FileRecord: Identifiable, Codable, Hashable, Sendable {
 
     /// 是否发生了重命名。
     var wasRenamed: Bool { originalName != nil }
+
+    // MARK: 宽容解码
+    // 明细记录随报告写入任务文件，跨版本读取。逐字段 decodeIfPresent 避免新增字段
+    // 导致整条任务记录（乃至整个任务列表）解析失败。解码实现放在扩展里以保留成员初始化器。
+    private enum CodingKeys: String, CodingKey {
+        case id, relativePath, sourcePath, destinationPath, size, status
+        case sourceDigest, destinationDigest, duration, bytesPerSecond, message, verified
+        case transcode
+        case captureDate, captureSource, mediaKind, deviceModel, originalName
+    }
+}
+
+extension FileRecord {
+    /// 宽容解码：缺失的键回退默认值。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = FileRecord(relativePath: "", sourcePath: "",
+                                  destinationPath: "", size: 0, status: .planned)
+
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? fallback.id
+        relativePath = try container.decodeIfPresent(String.self, forKey: .relativePath)
+            ?? fallback.relativePath
+        sourcePath = try container.decodeIfPresent(String.self, forKey: .sourcePath)
+            ?? fallback.sourcePath
+        destinationPath = try container.decodeIfPresent(String.self, forKey: .destinationPath)
+            ?? fallback.destinationPath
+        size = try container.decodeIfPresent(Int64.self, forKey: .size) ?? fallback.size
+        status = try container.decodeIfPresent(FileStatus.self, forKey: .status) ?? fallback.status
+        sourceDigest = try container.decodeIfPresent(String.self, forKey: .sourceDigest)
+        destinationDigest = try container.decodeIfPresent(String.self, forKey: .destinationDigest)
+        duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration)
+            ?? fallback.duration
+        bytesPerSecond = try container.decodeIfPresent(Double.self, forKey: .bytesPerSecond)
+            ?? fallback.bytesPerSecond
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        verified = try container.decodeIfPresent(Bool.self, forKey: .verified) ?? fallback.verified
+        transcode = try container.decodeIfPresent(TranscodeOutcome.self, forKey: .transcode)
+        captureDate = try container.decodeIfPresent(Date.self, forKey: .captureDate)
+        captureSource = try container.decodeIfPresent(CaptureTimeSource.self, forKey: .captureSource)
+        mediaKind = try container.decodeIfPresent(MediaKind.self, forKey: .mediaKind)
+        deviceModel = try container.decodeIfPresent(String.self, forKey: .deviceModel)
+        originalName = try container.decodeIfPresent(String.self, forKey: .originalName)
+    }
 }
 
 // MARK: - 转码结果
@@ -1148,6 +1261,21 @@ struct TaskReport: Codable, Sendable {
     /// 报告摘要、详情页与 PDF 导出据此切换展示口径。
     var isTranscodeTask: Bool { taskKind == .transcode }
 
+    // MARK: 结局口径
+    //
+    // 计数不变量（见 `TaskRunner.append`）：`.verifyFailed` 同时计入 `copiedFiles`
+    // 与 `failedFiles`（`isProblem` 含校验不一致），所以这两个数都**包含**
+    // `verifyFailedFiles`。任何把「失败」与「校验不一致」并列展示的位置，
+    // 都必须先扣除校验不一致，否则各卡片加总会超过「计划文件数」。
+
+    /// 纯「读取或写入错误」的文件数（已扣除校验不一致）。
+    /// 与 `PDFReportRenderer.outcomeSegments` 使用同一口径。
+    var readWriteFailedFiles: Int { max(0, failedFiles - verifyFailedFiles) }
+
+    /// 真正成功写入目标且未落入校验不一致的文件数（已扣除校验不一致）。
+    /// 「已拷贝」原始值含校验不一致，单列该段时必须扣除，才能与其他段互斥且加总等于计划数。
+    var succeededCopyFiles: Int { max(0, copiedFiles - verifyFailedFiles) }
+
     var summaryLine: String {
         if isTranscodeTask {
             let result = success ? "全部完成" : (cancelled ? "已取消" : "存在异常")
@@ -1158,7 +1286,7 @@ struct TaskReport: Codable, Sendable {
             return text
         }
         let result = success ? "全部完成" : (cancelled ? "已取消" : "存在异常")
-        var text = "\(result)：拷贝 \(copiedFiles) 个文件，跳过 \(skippedFiles)，失败 \(failedFiles)，校验不一致 \(verifyFailedFiles)"
+        var text = "\(result)：拷贝 \(copiedFiles) 个文件，跳过 \(skippedFiles)，失败 \(readWriteFailedFiles)，校验不一致 \(verifyFailedFiles)"
         if isMediaArchive && filteredOutFiles > 0 {
             text += "；已排除 \(filteredOutFiles) 个非照片/视频文件"
         }

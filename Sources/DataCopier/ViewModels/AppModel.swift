@@ -30,6 +30,14 @@ final class AppModel: ObservableObject {
 
     private var runners: [UUID: TaskRunner] = [:]
 
+    /// 任务文件解析失败且无法留档时置位，禁止后续写盘以免覆盖用户数据。
+    private var isPersistenceDisabled = false
+
+    /// 合并落盘的防抖窗口。逐字符输入不会每次都写盘。
+    private static let saveCoalesceWindow: TimeInterval = 0.6
+    /// 待执行的合并写盘任务。
+    private var pendingSave: DispatchWorkItem?
+
     private let directoryURL: URL
     private let tasksURL: URL
     private let optionsURL: URL
@@ -60,6 +68,7 @@ final class AppModel: ObservableObject {
         try? FileManager.default.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
         load()
         observeUSBMounts()
+        observeTermination()
     }
 
     // MARK: - USB 移动设备检测
@@ -137,6 +146,9 @@ final class AppModel: ObservableObject {
 
     private func defaultName(for kind: TaskKind) -> String {
         let formatter = DateFormatter()
+        // 固定公历 + POSIX 区域，避免非公历地区用户拿到非公历年份。
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "MM-dd HH:mm"
         return "\(kind.displayName) \(formatter.string(from: Date()))"
     }
@@ -145,6 +157,20 @@ final class AppModel: ObservableObject {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         tasks[index] = task
         save()
+    }
+
+    /// 就地修改**当前**记录的选项，而不是用视图渲染时的快照整体替换。
+    ///
+    /// `update(_:)` 是整条替换，而任务完成回调也会写同一条记录（`state` /
+    /// `lastReport` / `lastRunAt`）。若编辑动作基于的渲染快照早于完成回调，
+    /// 回写会把刚写入的运行结果覆盖掉。这里始终基于索引处的最新值改字段。
+    ///
+    /// 顺带把落盘合并到防抖窗口内：TextField 的 `set` 是**逐字符**触发，
+    /// 每次都整条替换并写两个 JSON 会造成明显的磁盘写入放大。
+    func editOptions(_ id: UUID, _ body: (inout TaskOptions) -> Void) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        body(&tasks[index].options)
+        requestSave()
     }
 
     func remove(_ id: UUID) {
@@ -373,6 +399,9 @@ final class AppModel: ObservableObject {
     // MARK: - 持久化
 
     func save() {
+        // 任务文件曾解析失败且无法留档时，禁止写回：宁可本次会话不落盘，
+        // 也不能用空列表覆盖用户可能仍有救的原文件。
+        guard !isPersistenceDisabled else { return }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -387,18 +416,69 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 请求落盘，但合并短时间内的连续调用。
+    ///
+    /// 表单逐字符编辑会高频触发，逐次写盘既无必要也拖慢输入手感。
+    /// 真正写盘推迟到防抖窗口结束；退出前由 `flushSave()` 兜底。
+    func requestSave() {
+        guard !isPersistenceDisabled else { return }
+        pendingSave?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.pendingSave = nil
+            self?.save()
+        }
+        pendingSave = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppModel.saveCoalesceWindow, execute: item)
+    }
+
+    /// 立即落盘，取消待执行的合并写盘。退出前调用，确保不丢最后一笔编辑。
+    func flushSave() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        save()
+    }
+
+    /// 应用退出时把待写盘的改动立即落盘。
+    private func observeTermination() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushSave() }
+        }
+    }
+
     private func load() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        if let data = try? Data(contentsOf: tasksURL),
-           let stored = try? decoder.decode([CopyTask].self, from: data) {
-            tasks = stored.map { task in
-                var normalized = task
-                if normalized.state == .running || normalized.state == .cancelling {
-                    normalized.state = .idle
+        if FileManager.default.fileExists(atPath: tasksURL.path) {
+            do {
+                let data = try Data(contentsOf: tasksURL)
+                let stored = try decoder.decode([CopyTask].self, from: data)
+                tasks = stored.map { task in
+                    var normalized = task
+                    if normalized.state == .running || normalized.state == .cancelling {
+                        normalized.state = .idle
+                    }
+                    return normalized
                 }
-                return normalized
+            } catch {
+                // 读文件或解码失败：绝不静默清空。先改名留档，再按能否留档决定后续策略。
+                if let backup = CorruptFileBackup.quarantine(tasksURL) {
+                    // 原文件已保全，本次以空列表启动，后续写盘安全，予以放行。
+                    banner = BannerMessage(
+                        kind: .error,
+                        text: "任务列表无法读取（文件可能已损坏）。",
+                        caption: "原文件已备份为 \(backup.lastPathComponent)")
+                } else {
+                    isPersistenceDisabled = true
+                    banner = BannerMessage(
+                        kind: .error,
+                        text: "任务列表无法读取，且无法备份原文件；已暂停自动保存以防止覆盖。",
+                        caption: "请手动检查 \(tasksURL.path)")
+                }
             }
         }
 
