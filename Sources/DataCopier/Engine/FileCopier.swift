@@ -69,8 +69,8 @@ enum ConflictResolver {
 /// 设计要点：
 /// 1. 数据通过 `read` / `write` 显式分块搬运，因此哈希可以在同一个循环里增量计算，
 ///    避免「先拷一遍、再读一遍算校验」的二次读盘开销。
-/// 2. 先写入 `xxx.datacopier-tmp`，全部落盘后再原子重命名。中断只会留下临时文件，
-///    目标目录里不会出现「看起来完整、实际残缺」的文件。
+/// 2. 先写入目标目录内的唯一临时文件，全部落盘后再原子重命名。并发任务不会
+///    争用同一个临时路径，中断也不会让目标目录出现「看起来完整、实际残缺」的文件。
 /// 3. 每次写盘后 `fsync`，保证进程崩溃或断电时数据已真正落到介质。
 enum FileCopier {
 
@@ -108,10 +108,10 @@ enum FileCopier {
             try fm.createDirectory(atPath: parent, withIntermediateDirectories: true)
         }
 
-        let temporaryPath = finalPath + ".datacopier-tmp"
-        if fm.fileExists(atPath: temporaryPath) {
-            try? fm.removeItem(atPath: temporaryPath)
-        }
+        // 临时文件必须与最终文件位于同一目录，才能用 rename 做原子替换。
+        // UUID + O_EXCL 同时防止并发任务选中同一路径，以及意外覆盖已有文件。
+        let temporaryPath = (parent as NSString)
+            .appendingPathComponent(".\(UUID().uuidString).datacopier-tmp")
 
         let sourceDescriptor = open(item.sourcePath, O_RDONLY)
         guard sourceDescriptor >= 0 else {
@@ -119,9 +119,19 @@ enum FileCopier {
         }
         defer { close(sourceDescriptor) }
 
-        let destinationDescriptor = open(temporaryPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        let destinationDescriptor = open(
+            temporaryPath,
+            O_WRONLY | O_CREAT | O_EXCL,
+            0o644
+        )
         guard destinationDescriptor >= 0 else {
             return CopyOutcome(status: .failed, bytes: 0, message: "无法写入目标文件：\(errnoDescription())")
+        }
+        var ownsTemporaryFile = true
+        defer {
+            if ownsTemporaryFile {
+                try? fm.removeItem(atPath: temporaryPath)
+            }
         }
 
         var hasher = StreamingHasher(algorithm: task.options.algorithm)
@@ -180,12 +190,16 @@ enum FileCopier {
         }
 
         do {
-            if fm.fileExists(atPath: finalPath) {
-                try? fm.removeItem(atPath: finalPath)
+            let moveResult = temporaryPath.withCString { oldPath in
+                finalPath.withCString { newPath in
+                    rename(oldPath, newPath)
+                }
             }
-            try fm.moveItem(atPath: temporaryPath, toPath: finalPath)
+            guard moveResult == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            ownsTemporaryFile = false
         } catch {
-            try? fm.removeItem(atPath: temporaryPath)
             return CopyOutcome(status: .failed,
                                bytes: transferredBytes,
                                message: "写入目标位置失败：\(error.localizedDescription)")

@@ -10,9 +10,14 @@ enum Format {
         formatter.isAdaptive = true
         return formatter
     }()
+    /// ByteCountFormatter 不是线程安全的。窗口按 5 Hz 刷新时，后台 PDF
+    /// 报告也可能同时格式化字节数，因此统一串行访问同一个实例。
+    private static let byteFormatterLock = NSLock()
 
     static func bytes(_ value: Int64) -> String {
-        byteFormatter.string(fromByteCount: max(0, value))
+        byteFormatterLock.lock()
+        defer { byteFormatterLock.unlock() }
+        return byteFormatter.string(fromByteCount: max(0, value))
     }
 
     static func bytes(_ value: Double) -> String {
@@ -21,7 +26,7 @@ enum Format {
 
     static func speed(_ bytesPerSecond: Double) -> String {
         guard bytesPerSecond > 1 else { return "—" }
-        return byteFormatter.string(fromByteCount: Int64(bytesPerSecond)) + "/s"
+        return bytes(Int64(bytesPerSecond)) + "/s"
     }
 
     /// 把秒数格式化为 `1h 02m 03s` / `02m 03s` / `12.3s`
@@ -59,12 +64,17 @@ enum Format {
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
+    private static let dateFormatterLock = NSLock()
 
     static func timestamp(_ date: Date) -> String {
-        dateFormatter.string(from: date)
+        dateFormatterLock.lock()
+        defer { dateFormatterLock.unlock() }
+        return dateFormatter.string(from: date)
     }
 
     /// 生成适合作为文件名的字符串。

@@ -27,6 +27,7 @@ struct NewTaskSheet: View {
     @State private var scanningDevice = false
     /// 最近一次识别设备的结果摘要，显示在来源列表下方。
     @State private var usbScanSummary: String?
+    @State private var hoveredKind: TaskKind?
 
     // 转码任务表单状态
     @State private var transcodeName = ""
@@ -39,7 +40,7 @@ struct NewTaskSheet: View {
         VStack(spacing: 0) {
             header
 
-            Divider()
+            Rectangle().fill(Bencho.hairline).frame(height: 1)
 
             switch step {
             case .choose:
@@ -50,7 +51,8 @@ struct NewTaskSheet: View {
                 transcodeForm
             }
         }
-        .frame(width: 620, height: 640)
+        .background(Bencho.bg)
+        .frame(width: 680, height: 680)
         .onAppear {
             options = model.defaultOptions
             transcodeSettings = model.defaultOptions.transcodeSettings
@@ -105,15 +107,22 @@ struct NewTaskSheet: View {
                 }
                 .buttonStyle(.borderless)
             }
-            Text(title)
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                if step == .choose {
+                    Text("选择一种执行方式，后续可随时回到任务配置中调整。")
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
+                }
+            }
             Spacer()
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Bencho.ink4)
             }
             .buttonStyle(.borderless)
             .help("关闭")
@@ -136,8 +145,8 @@ struct NewTaskSheet: View {
         VStack(spacing: 18) {
             Spacer()
             Text("请选择要创建的任务类型")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.body(13))
+                .foregroundStyle(Bencho.ink4)
             HStack(spacing: 16) {
                 ForEach(TaskKind.allCases) { kind in
                     Button {
@@ -155,28 +164,52 @@ struct NewTaskSheet: View {
     }
 
     private func kindCard(_ kind: TaskKind) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: kind.symbol)
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(kind == .transcode ? Color.purple : Color.accentColor)
-                .frame(width: 34, alignment: .center)
+        let hovered = hoveredKind == kind
+        let tint = kind == .transcode ? Bencho.signal : Bencho.pick
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: kind.symbol)
+                    .font(.system(size: 23, weight: .medium))
+                    .frame(width: 42, height: 42)
+                    .background(Bencho.slab, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .foregroundStyle(Bencho.onSlab)
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(hovered ? tint : Bencho.ink5)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        (hovered ? Bencho.washStrong : Bencho.wash),
+                        in: Circle())
+            }
 
             Text(kind.displayName)
-                .font(.title3.weight(.semibold))
+                .font(.system(size: 17, weight: .semibold))
 
             Text(kind.summary)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.body(13))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
         .padding(18)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        .background(
+            hovered ? Bencho.card : Bencho.fillSlab,
+            in: RoundedRectangle(cornerRadius: Bencho.Radius.card, style: .continuous)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: Bencho.Radius.card, style: .continuous)
+                .strokeBorder(hovered ? tint.opacity(0.5) : Bencho.hairline,
+                              lineWidth: 1)
         )
         .contentShape(Rectangle())
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.16)) {
+                hoveredKind = inside ? kind : nil
+            }
+        }
+        .accessibilityLabel("新建\(kind.displayName)")
     }
 
     // MARK: - 拷贝任务表单
@@ -187,27 +220,27 @@ struct NewTaskSheet: View {
             if let usbHint {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "externaldrive.connected.to.line.below")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Bencho.signal)
                     Text(usbHint)
-                        .font(.callout)
+                        .font(Bencho.Typeface.body(13))
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(Color.blue.opacity(0.08))
+                .background(Bencho.card)
             }
 
-            Form {
+            BenchoForm {
                 CopyPresetPicker(options: $options)
 
-                Section("任务") {
+                BenchoSection(title: "任务") {
                     TextField("任务名称", text: $name, prompt: Text("留空则按时间自动命名"))
                 }
 
                 sourceSection($sources, showDeviceField: true)
 
-                Section("目标") {
+                BenchoSection(title: "目标") {
                     destinationRow($destination)
                 }
 
@@ -235,11 +268,10 @@ struct NewTaskSheet: View {
                     ))
                 }
             }
-            .formStyle(.grouped)
 
             validationBar(validationMessage)
 
-            Divider()
+            Rectangle().fill(Bencho.hairline).frame(height: 1)
 
             footer {
                 Button("恢复默认选项") {
@@ -254,31 +286,30 @@ struct NewTaskSheet: View {
 
     private var transcodeForm: some View {
         VStack(spacing: 0) {
-            Form {
+            BenchoForm {
                 TranscodeForm(settings: Binding(
                     get: { transcodeSettings },
                     set: { transcodeSettings = $0 }
                 ), standalone: true)
 
-                Section("任务") {
+                BenchoSection(title: "任务") {
                     TextField("任务名称", text: $transcodeName, prompt: Text("留空则按时间自动命名"))
                 }
 
                 sourceSection($transcodeSources)
 
-                Section("输出") {
+                BenchoSection(title: "输出") {
                     destinationRow($transcodeDestination)
                     Text("转码输出统一写入该文件夹，文件名带预设后缀，不会覆盖原始视频。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .formStyle(.grouped)
 
             validationBar(transcodeValidation)
 
-            Divider()
+            Rectangle().fill(Bencho.hairline).frame(height: 1)
 
             footer {
                 createButtons(disabled: transcodeSources.isEmpty || transcodeDestination.isEmpty) {
@@ -365,8 +396,8 @@ struct NewTaskSheet: View {
         Section {
             if list.wrappedValue.isEmpty {
                 Text("尚未选择来源")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.body(13))
+                    .foregroundStyle(Bencho.ink4)
             } else {
                 // 每个来源行都内嵌设备名文本框：无论是识别出的 USB 设备
                 // 还是手动添加的文件夹，都可单独填写自定义设备目录名。
@@ -396,8 +427,8 @@ struct NewTaskSheet: View {
                     Spacer(minLength: 8)
                     if let usbScanSummary {
                         Text(usbScanSummary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(Bencho.Typeface.meta(11))
+                            .foregroundStyle(Bencho.ink4)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .help(usbScanSummary)
@@ -423,10 +454,10 @@ struct NewTaskSheet: View {
                            showDeviceField: Bool) -> some View {
         HStack(spacing: 8) {
             Image(systemName: sourceIcon(path))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
             Text(path)
-                .font(.system(.caption, design: .monospaced))
+                .font(Bencho.Typeface.mono(11))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help(path)
@@ -446,7 +477,7 @@ struct NewTaskSheet: View {
                 list.wrappedValue.removeAll { $0 == path }
             } label: {
                 Image(systemName: "minus.circle")
-                    .font(.caption)
+                    .font(Bencho.Typeface.meta(11))
             }
             .buttonStyle(.borderless)
         }
@@ -456,7 +487,7 @@ struct NewTaskSheet: View {
         HStack(spacing: 6) {
             Text(path.wrappedValue.isEmpty ? "尚未选择文件夹" : path.wrappedValue)
                 .font(path.wrappedValue.isEmpty ? .callout : .system(.caption, design: .monospaced))
-                .foregroundStyle(path.wrappedValue.isEmpty ? .secondary : .primary)
+                .foregroundStyle(path.wrappedValue.isEmpty ? Bencho.ink5 : Bencho.fillOn)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help(path.wrappedValue)
@@ -474,10 +505,10 @@ struct NewTaskSheet: View {
             if let message {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Bencho.warn)
                     Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                     Spacer()
                 }
                 .padding(.horizontal, 16)

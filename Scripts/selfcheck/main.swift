@@ -461,9 +461,33 @@ func checkVideoCapability() {
         print("         · \(encoder.name)  [\(fourCC)]")
     }
 
-    expect(VideoCapability.hasHardwareEncoder(for: .h264), "H.264 硬件编码通路可用")
-    expect(VideoCapability.hasHardwareEncoder(for: .hevc), "HEVC 硬件编码通路可用")
-    expect(encoders.contains { $0.codec == "avc1" }, "H.264 的 FourCC 解析正确（avc1）")
+    // 虚拟机和部分 Intel Mac 不向 VideoToolbox 暴露硬件编码器。
+    // 能力探测应忠实返回 false，转码引擎随后使用软件编码器，而不是让自检失败。
+    let advertisedH264 = hardware.contains { encoder in
+        let name = encoder.name.lowercased()
+        return name.contains("h.264") || name.contains("avc")
+    }
+    let advertisedHEVC = hardware.contains { encoder in
+        encoder.name.lowercased().contains("hevc")
+    }
+    expect(VideoCapability.hasHardwareEncoder(for: .h264) == advertisedH264,
+           advertisedH264 ? "H.264 硬件编码通路可用"
+                           : "未暴露 H.264 硬件编码器时能力探测返回 false")
+    expect(VideoCapability.hasHardwareEncoder(for: .hevc) == advertisedHEVC,
+           advertisedHEVC ? "HEVC 硬件编码通路可用"
+                          : "未暴露 HEVC 硬件编码器时能力探测返回 false")
+
+    let avcEncoders = hardware.filter { encoder in
+        let name = encoder.name.lowercased()
+        return name.contains("h.264") || name.contains("avc")
+    }
+    if avcEncoders.isEmpty {
+        expect(true, "当前环境无 H.264 VideoToolbox 编码器，跳过 FourCC 校验")
+    } else {
+        expect(avcEncoders.allSatisfy { $0.codec == "avc1" },
+               "H.264 的 FourCC 解析正确（avc1）",
+               detail: avcEncoders.map { "\($0.name):\($0.codec)" }.joined(separator: "、"))
+    }
     print("       FFmpeg：\(FFmpegLocator.locate()?.path ?? "未检测到")")
 }
 
@@ -655,6 +679,16 @@ func checkTranscodePipeline() {
                                  : hevcPlan.videoEncoder == "libx265",
            "选择可用的 HEVC 编码器",
            detail: hevcPlan.videoEncoder ?? "无")
+    if let forcedSoftware = try? TranscodePlan.resolve(
+        settings: hevcSettings,
+        ffmpeg: ffmpegURL,
+        preferHardware: false
+    ) {
+        expect(!forcedSoftware.usesHardware && forcedSoftware.videoEncoder == "libx265",
+               "可显式选择软件编码器作为硬件失败回退")
+    } else {
+        expect(false, "显式解析软件编码器")
+    }
 
     let hevcArguments = hevcPlan.arguments(input: URL(fileURLWithPath: small),
                                            output: URL(fileURLWithPath: small + ".out.mp4"))
@@ -741,7 +775,13 @@ func checkTranscodePipeline() {
         // 源素材长边仅 640，低于 1920 上限，必须原样保留而不是被放大。
         expect(info?.width == 640 && info?.height == 360, "小素材未被放大",
                detail: info?.resolutionText ?? "—")
-        expect(hevcOutcome.usedHardware == hevcPlan.usesHardware, "硬件标记与实际编码器一致")
+        expect(!hevcOutcome.usedHardware || hevcPlan.usesHardware,
+               "硬件标记只在实际使用硬件编码时置位")
+        if hevcPlan.usesHardware && !hevcOutcome.usedHardware {
+            expect(hevcOutcome.message?.contains("自动改用软件编码") == true,
+                   "硬件编码运行失败时成功回退软件编码",
+                   detail: hevcOutcome.message ?? "—")
+        }
 
         let outputAttributes = try? fm.attributesOfItem(atPath: outputPath)
         let outputSize = (outputAttributes?[.size] as? NSNumber)?.int64Value ?? 0
@@ -789,7 +829,8 @@ func checkTranscodePipeline() {
                detail: "\(Format.bytes(inputSize)) → \(Format.bytes(outcome.outputBytes))")
         expect(outcome.compressionRatio < 0.7, "压缩比达到预设预期区间",
                detail: String(format: "%.0f%%", outcome.compressionRatio * 100))
-        expect(outcome.usedHardware == hevcPlan.usesHardware, "压缩走预期的编码通路",
+        expect(!outcome.usedHardware || hevcPlan.usesHardware,
+               "压缩结果记录实际使用的编码通路",
                detail: outcome.usedHardware ? "硬件" : "软件")
         print(String(format: "       1920×1080 三秒素材：%@ → %@（%.0f%%），%@，倍速 %.1f×",
                      Format.bytes(inputSize),
@@ -1341,6 +1382,10 @@ func checkCopyPresets() {
     settings.separateByType = true
     settings.photoFolderName = "  相册/精选  "
     expect(settings.folderName(for: .photo) == "相册-精选", "自定义目录名会去除分隔符与空白")
+    settings.photoFolderName = ".."
+    expect(settings.folderName(for: .photo) == "未命名", "归档目录名不能使用 .. 逃逸目标目录")
+    settings.photoFolderName = "."
+    expect(settings.folderName(for: .photo) == "未命名", "归档目录名不能使用当前目录占位符")
     settings.photoFolderName = ""
     expect(settings.folderName(for: .photo) == "Photos", "自定义目录名为空时回退到默认名称")
 
@@ -2275,6 +2320,51 @@ func checkCopyPresets() {
 
     // ---- USB 设备枚举：不依赖机器上是否真插了设备，只验证结果合法 ----
     do {
+        let diskImageFixture: [String: Any] = [
+            "images": [
+                ["system-entities": [
+                    ["dev-entry": "/dev/disk20"],
+                    ["dev-entry": "/dev/disk20s1", "mount-point": "/Volumes/TestDMG"]
+                ]]
+            ]
+        ]
+        let diskImageData = try? PropertyListSerialization.data(
+            fromPropertyList: diskImageFixture,
+            format: .xml,
+            options: 0)
+        let imageMounts = diskImageData.map(USBDeviceScanner.diskImageMountPoints(from:)) ?? []
+        expect(imageMounts.contains("/Volumes/TestDMG"),
+               "USB 枚举：从 hdiutil 清单提取 DMG 挂载点")
+        expect(!imageMounts.contains("/dev/disk20"),
+               "USB 枚举：忽略无挂载点的磁盘映像实体")
+        expect(USBDeviceScanner.diskImageMountPoints(from: Data("invalid".utf8)).isEmpty,
+               "USB 枚举：无法解析映像清单时返回空集合")
+
+        expect(USBDeviceScanner.isUSBVolume(
+            path: "/Volumes/Camera",
+            isRemovable: true,
+            isEjectable: true,
+            diskImageMountPoints: imageMounts
+        ), "USB 枚举：真实可移除卷保留为 USB 设备")
+        expect(!USBDeviceScanner.isUSBVolume(
+            path: "/Volumes/TestDMG",
+            isRemovable: true,
+            isEjectable: true,
+            diskImageMountPoints: imageMounts
+        ), "USB 枚举：固定夹具中的 DMG 挂载点被排除")
+        expect(!USBDeviceScanner.isUSBVolume(
+            path: "/",
+            isRemovable: true,
+            isEjectable: true,
+            diskImageMountPoints: imageMounts
+        ), "USB 枚举：根目录始终排除")
+        expect(!USBDeviceScanner.isUSBVolume(
+            path: "/Volumes/Internal",
+            isRemovable: false,
+            isEjectable: false,
+            diskImageMountPoints: imageMounts
+        ), "USB 枚举：不可移除且不可弹出的内置卷被排除")
+
         let hits = USBDeviceScanner.detectUSBDevices()
         expect(hits.allSatisfy { $0.volumePath != "/" && !$0.volumePath.isEmpty },
                "USB 枚举：不把根目录与空路径当作 USB 设备",
@@ -2356,6 +2446,70 @@ func checkCopyPresets() {
             expect(false, "同名来源根规划成功")
         }
 
+        // ---- 重叠来源：父目录、子目录和文件同时选中时只能规划/拷贝一次 ----
+        let overlapRoot = sandbox.appendingPathComponent("overlapSource")
+        let overlapNested = overlapRoot.appendingPathComponent("nested")
+        try? fm.createDirectory(at: overlapNested, withIntermediateDirectories: true)
+        let overlapA = overlapRoot.appendingPathComponent("a.txt")
+        let overlapB = overlapNested.appendingPathComponent("b.txt")
+        try? "a".write(to: overlapA, atomically: true, encoding: .utf8)
+        try? "b".write(to: overlapB, atomically: true, encoding: .utf8)
+
+        let overlapDestination = sandbox.appendingPathComponent("overlapdst")
+        try? fm.createDirectory(at: overlapDestination, withIntermediateDirectories: true)
+        let overlapTask = CopyTask(
+            name: "重叠来源",
+            sources: [overlapRoot.path, overlapNested.path, overlapA.path],
+            destination: overlapDestination.path,
+            options: dupOptions
+        )
+        if let overlapPlan = try? FilePlanner.plan(overlapTask, cancellation: Cancellation()) {
+            expect(overlapPlan.items.count == 2, "父目录、子目录与文件重叠时只规划一次",
+                   detail: overlapPlan.items.map(\.sourcePath).joined(separator: "、"))
+            expect(Set(overlapPlan.items.map(\.sourcePath)).count == 2,
+                   "重叠来源规划结果按真实文件路径去重")
+        } else {
+            expect(false, "重叠来源规划成功")
+        }
+        if let overlapReport = runTaskSync(overlapTask) {
+            expect(overlapReport.copiedFiles == 2, "重叠来源实际只拷贝两个文件",
+                   detail: "拷贝 \(overlapReport.copiedFiles) 个")
+            expect(overlapReport.totalFiles == 2, "重叠来源报告不重复计数",
+                   detail: "计划 \(overlapReport.totalFiles) 个")
+        } else {
+            expect(false, "重叠来源任务执行完成")
+        }
+
+        // 符号链接是不同的来源条目，即使指向同一目标也必须全部保留。
+        let linkRoot = sandbox.appendingPathComponent("overlapLinks")
+        try? fm.createDirectory(at: linkRoot, withIntermediateDirectories: true)
+        try? "target".write(to: linkRoot.appendingPathComponent("target.txt"),
+                             atomically: true, encoding: .utf8)
+        try? fm.createSymbolicLink(
+            atPath: linkRoot.appendingPathComponent("link-a.txt").path,
+            withDestinationPath: "target.txt"
+        )
+        try? fm.createSymbolicLink(
+            atPath: linkRoot.appendingPathComponent("link-b.txt").path,
+            withDestinationPath: "target.txt"
+        )
+        var linkOptions = dupOptions
+        linkOptions.copySymlinksAsLinks = true
+        let linkDestination = sandbox.appendingPathComponent("overlapLinkDst")
+        try? fm.createDirectory(at: linkDestination, withIntermediateDirectories: true)
+        if let linkPlan = try? FilePlanner.plan(
+            CopyTask(name: "保留链接",
+                     sources: [linkRoot.path],
+                     destination: linkDestination.path,
+                     options: linkOptions),
+            cancellation: Cancellation()
+        ) {
+            expect(linkPlan.items.filter(\.isSymlink).count == 2,
+                   "按链接拷贝时，同一目标的多个符号链接均被保留")
+        } else {
+            expect(false, "符号链接重叠来源规划成功")
+        }
+
         // ---- 连续同名：第 3 个应得 `a_3.jpg`，而不是词干累积的 `a_2_3.jpg` ----
         let tripleRoot = sandbox.appendingPathComponent("triple")
         var tripleSources: [String] = []
@@ -2378,6 +2532,88 @@ func checkCopyPresets() {
         } else {
             expect(false, "连续同名规划成功")
         }
+    }
+
+    // ---- 并发拷贝：目标相同也必须使用独立临时文件且不残留 ----
+    do {
+        let concurrentRoot = sandbox.appendingPathComponent("concurrentTemp")
+        let concurrentDestination = concurrentRoot.appendingPathComponent("dst")
+        try? fm.createDirectory(at: concurrentDestination, withIntermediateDirectories: true)
+        let payloadA = Data(repeating: 0x41, count: 8 * 1024 * 1024)
+        let payloadB = Data(repeating: 0x42, count: 8 * 1024 * 1024)
+        let sourceA = concurrentRoot.appendingPathComponent("a.bin")
+        let sourceB = concurrentRoot.appendingPathComponent("b.bin")
+        try? payloadA.write(to: sourceA)
+        try? payloadB.write(to: sourceB)
+
+        var concurrentOptions = TaskOptions.default
+        concurrentOptions.algorithm = .none
+        concurrentOptions.verifyAfterCopy = false
+        concurrentOptions.preserveMetadata = false
+        concurrentOptions.conflictPolicy = .overwrite
+        let concurrentTask = CopyTask(
+            name: "并发临时文件",
+            sources: [sourceA.path, sourceB.path],
+            destination: concurrentDestination.path,
+            options: concurrentOptions
+        )
+        let finalPath = concurrentDestination.appendingPathComponent("shared.bin").path
+        let items = [sourceA.path, sourceB.path].map {
+            FilePlanItem(sourcePath: $0,
+                         relativePath: "shared.bin",
+                         destinationPath: finalPath,
+                         size: 8 * 1024 * 1024)
+        }
+
+        final class CopyResultAccumulator: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [(FileStatus?, String?)] = []
+
+            func append(status: FileStatus?, message: String?) {
+                lock.lock()
+                values.append((status, message))
+                lock.unlock()
+            }
+
+            var snapshot: [(FileStatus?, String?)] {
+                lock.lock()
+                defer { lock.unlock() }
+                return values
+            }
+        }
+
+        let results = CopyResultAccumulator()
+        let group = DispatchGroup()
+        for item in items {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                do {
+                    let outcome = try FileCopier.perform(
+                        item: item,
+                        task: concurrentTask,
+                        cancellation: Cancellation(),
+                        onBytes: { _ in }
+                    )
+                    results.append(status: outcome.status, message: outcome.message)
+                } catch {
+                    results.append(status: nil, message: error.localizedDescription)
+                }
+            }
+        }
+
+        expect(group.wait(timeout: .now() + 20) == .success, "并发拷贝在超时内完成")
+        let snapshot = results.snapshot
+        expect(snapshot.count == 2 && snapshot.allSatisfy { $0.0 == .copied },
+               "并发写入同一目标时全部使用独立临时文件并完成",
+               detail: snapshot.compactMap(\.1).joined(separator: "；"))
+        let leftovers = ((try? fm.contentsOfDirectory(atPath: concurrentDestination.path)) ?? [])
+            .filter { $0.hasSuffix(".datacopier-tmp") }
+        expect(leftovers.isEmpty, "并发拷贝后不残留临时文件",
+               detail: leftovers.joined(separator: ", "))
+        let finalData = try? Data(contentsOf: URL(fileURLWithPath: finalPath))
+        expect(finalData == payloadA || finalData == payloadB,
+               "并发写入后的最终文件内容完整且来自其中一个来源")
     }
 
     // ---- 仅时间戳模式：同一秒必然撞名，只能靠序号区分 ----

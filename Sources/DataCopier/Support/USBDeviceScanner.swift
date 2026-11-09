@@ -58,20 +58,88 @@ enum USBDeviceScanner {
     /// 内置磁盘与隐藏系统卷不在结果中。
     static func detectUSBDevices() -> [USBDeviceHit] {
         let fm = FileManager.default
-        let urls = (try? fm.mountedVolumeURLs(
+        let urls = fm.mountedVolumeURLs(
             includingResourceValuesForKeys: [.volumeIsRemovableKey, .volumeIsEjectableKey],
-            options: [.skipHiddenVolumes])) ?? []
+            options: [.skipHiddenVolumes]) ?? []
+        let diskImageMountPoints = mountedDiskImageMountPoints()
 
         var hits: [USBDeviceHit] = []
         for url in urls {
             let values = try? url.resourceValues(forKeys: [.volumeIsRemovableKey,
                                                            .volumeIsEjectableKey])
-            guard values?.volumeIsRemovable == true || values?.volumeIsEjectable == true,
-                  url.path != "/" else { continue }
+            guard isUSBVolume(
+                path: url.path,
+                isRemovable: values?.volumeIsRemovable ?? false,
+                isEjectable: values?.volumeIsEjectable ?? false,
+                diskImageMountPoints: diskImageMountPoints
+            ) else { continue }
             hits.append(USBDeviceHit(volumePath: url.path,
                                      deviceModel: detectDeviceModel(at: url.path)))
         }
         return hits
+    }
+
+    /// 纯函数形式的卷分类规则，便于用固定数据验证 DMG 与真实 USB 的差异。
+    static func isUSBVolume(path: String,
+                            isRemovable: Bool,
+                            isEjectable: Bool,
+                            diskImageMountPoints: Set<String>) -> Bool {
+        let normalized = normalizedMountPath(path)
+        guard !normalized.isEmpty, normalized != "/" else { return false }
+        guard isRemovable || isEjectable else { return false }
+        return !diskImageMountPoints.contains(normalized)
+    }
+
+    /// 判断一个卷是否来自已挂载的磁盘映像（如打开的 DMG）。
+    ///
+    /// macOS 会把磁盘映像卷也标记为 removable/ejectable，因此单靠卷属性会将
+    /// DMG 误判成 USB。`hdiutil info -plist` 提供映像实体与挂载点的对应关系。
+    static func isDiskImageVolume(at path: String) -> Bool {
+        mountedDiskImageMountPoints().contains(normalizedMountPath(path))
+    }
+
+    /// 解析磁盘映像清单中的挂载点。独立出来便于自检覆盖 plist 结构变化。
+    static func diskImageMountPoints(from propertyListData: Data) -> Set<String> {
+        guard let root = try? PropertyListSerialization.propertyList(
+            from: propertyListData,
+            options: [],
+            format: nil) as? [String: Any],
+              let images = root["images"] as? [[String: Any]] else {
+            return []
+        }
+
+        var mountPoints = Set<String>()
+        for image in images {
+            guard let entities = image["system-entities"] as? [[String: Any]] else { continue }
+            for entity in entities {
+                guard let path = entity["mount-point"] as? String else { continue }
+                mountPoints.insert(normalizedMountPath(path))
+            }
+        }
+        return mountPoints
+    }
+
+    private static func mountedDiskImageMountPoints() -> Set<String> {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["info", "-plist"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return [] }
+            return diskImageMountPoints(from: data)
+        } catch {
+            return []
+        }
+    }
+
+    private static func normalizedMountPath(_ path: String) -> String {
+        (path as NSString).standardizingPath
     }
 
     /// 深度优先收集卷内的照片与视频路径，先到先得。

@@ -11,7 +11,7 @@ struct CopyPresetPicker: View {
     @Binding var options: TaskOptions
 
     var body: some View {
-        Section("拷贝预设") {
+        BenchoSection(title: "拷贝预设") {
             HStack(alignment: .top, spacing: 8) {
                 ForEach(CopyPreset.allCases) { preset in
                     Button {
@@ -41,18 +41,18 @@ struct CopyPresetPicker: View {
             HStack(spacing: 6) {
                 Image(systemName: preset.symbol)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(selected ? Bencho.fillOn : Bencho.ink4)
                 Text(preset.displayName)
-                    .font(.callout.weight(.semibold))
+                    .font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 2)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 13))
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.45))
+                    .foregroundStyle(selected ? Bencho.fillOn : Bencho.ink5)
             }
 
             Text(preset.summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -60,11 +60,11 @@ struct CopyPresetPicker: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(selected ? Color.accentColor.opacity(0.09) : Color.primary.opacity(0.035))
+                .fill(selected ? Bencho.washStrong : Bencho.fillSlab)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(selected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08),
+                .strokeBorder(selected ? Bencho.fillOn.opacity(0.55) : Bencho.hairline,
                               lineWidth: selected ? 1.2 : 0.5)
         )
         .contentShape(Rectangle())
@@ -83,7 +83,7 @@ struct MediaImportForm: View {
     var previewDeviceName: String? = nil
 
     var body: some View {
-        Section("归档选项") {
+        BenchoSection(title: "归档选项") {
             // 三项核心开关放在一起：文件重命名、照片/视频分类、归档目录层级。
             // 每项都按用户列出的枚举值给出明确文案，避免在标签里靠副标题补足。
             Picker("文件重命名", selection: $settings.renameByCaptureTime) {
@@ -100,12 +100,12 @@ struct MediaImportForm: View {
                     || settings.renameMode == .customWithOriginalAndTimestamp {
                     TextField("自定义字段", text: $settings.customRenamePrefix, prompt: Text("默认为空，例如：婚礼、旅行"))
                     Text("自定义字段会作为前缀拼在文件名最前面，留空则只保留后面的部分。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                 }
                 Text("示例：\(exampleName)")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
             }
 
             Toggle("照片与视频分开存放", isOn: $settings.separateByType)
@@ -119,22 +119,22 @@ struct MediaImportForm: View {
             // 归档目录的自定义子目录：拼进「月-日」叶子目录名，默认为空仅保留月-日。
             TextField("自定义子目录", text: $settings.folderSuffix, prompt: Text("默认为空，例如：婚礼、旅行"))
             Text("自定义子目录会以连字符拼接在「月-日」文件夹名之后，如 03-15-婚礼；留空则仅保留月-日。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
 
             // 归档规则有六七个开关，逐条列举示例路径比任何文字都直观。
             VStack(alignment: .leading, spacing: 3) {
                 Text("归档路径预览")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Bencho.ink4)
                 Text(previewPath(for: .photo))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(previewPath(for: .video))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -220,16 +220,16 @@ struct MediaExtrasForm: View {
                 if settings.folderGranularity.includesDevice {
                     Text("设备档位会从照片 EXIF 与视频容器中读取机型，在类型目录之后"
                          + "（如 2024/03/03-15/Photos/机型）再按设备分一层目录。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                         .fixedSize(horizontal: false, vertical: true)
 
                     TextField("未识别设备的目录名",
                               text: $settings.unknownDeviceFolderName,
                               prompt: Text("未知设备"))
                     Text("元数据里没有机型信息的素材（截图、后期导出、扫描件等）统一归入此目录。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -239,21 +239,21 @@ struct MediaExtrasForm: View {
                     }
                 }
                 Text(settings.videoTimeZone.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Toggle("从文件名解析时间戳", isOn: $settings.parseFilenameTimestamp)
                 Text("适用 `IMG_20240315_143022.JPG`、`VID_20240315_143022.mp4` 这类命名。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
 
                 Toggle("无法确定时回退到文件修改时间", isOn: $settings.fallbackToFileDate)
                 Text(settings.fallbackToFileDate
                      ? "元数据与文件名都无法给出时间时，用文件修改时间兜底——结果可能偏向拷贝当天的日期。"
                      : "关闭后，无法确定拍摄时间的文件将被跳过，并在报告中单独列出。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
                     .fixedSize(horizontal: false, vertical: true)
             } label: {
                 Text("高级选项")
@@ -262,21 +262,21 @@ struct MediaExtrasForm: View {
             Text("可选细化")
         } footer: {
             Text("默认即可应付多数相机卡导入；只有遇到目录名冲突、设备识别错误或视频日期错位时再展开。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
-        Section("支持的格式") {
+        BenchoSection(title: "支持的格式") {
             LabeledContent("照片") {
                 Text("\(MediaFileTypes.photoExtensions.count) 种扩展名")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Bencho.ink4)
             }
             .help(MediaFileTypes.extensionList(for: .photo).map { ".\($0)" }.joined(separator: " "))
 
             LabeledContent("视频") {
                 Text("\(MediaFileTypes.videoExtensions.count) 种扩展名")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Bencho.ink4)
             }
             .help(MediaFileTypes.extensionList(for: .video).map { ".\($0)" }.joined(separator: " "))
 
@@ -284,11 +284,11 @@ struct MediaExtrasForm: View {
                 formatList(title: "照片", kind: .photo)
                 formatList(title: "视频", kind: .video)
             }
-            .font(.callout)
+            .font(Bencho.Typeface.body(13))
 
             Text("其余类型的文件不会被拷贝。需要连其他文件一起搬运时，请改用「文件拷贝」。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -296,10 +296,10 @@ struct MediaExtrasForm: View {
     private func formatList(title: String, kind: MediaKind) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.system(size: 11.5, weight: .medium))
             Text(MediaFileTypes.extensionList(for: kind).map { ".\($0)" }.joined(separator: "  "))
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.mono(10.5))
+                .foregroundStyle(Bencho.ink4)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

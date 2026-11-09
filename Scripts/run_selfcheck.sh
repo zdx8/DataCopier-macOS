@@ -12,11 +12,43 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/Sources/DataCopier"
 OUT="${TMPDIR:-/tmp}/datacopier-selfcheck"
 
-DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
-SDKROOT="${SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk}"
+XCODE_ROOT="$(xcode-select -p 2>/dev/null || true)"
+CLT_ROOT="/Library/Developer/CommandLineTools"
+SWIFTUI_MACROS="$XCODE_ROOT/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
+
+if [[ -z "${DEVELOPER_DIR:-}" ]]; then
+  if [[ -n "$XCODE_ROOT" && -f "$SWIFTUI_MACROS" ]]; then
+    export DEVELOPER_DIR="$XCODE_ROOT"
+  elif [[ -d "$CLT_ROOT" ]]; then
+    export DEVELOPER_DIR="$CLT_ROOT"
+  fi
+fi
+
+if [[ -z "${SDKROOT:-}" ]]; then
+  # 与 build_app.sh 同一规则：CLT 的默认 SDK 指向 27.x，缺 SwiftUI 宏插件，
+  # 回退到 CLT 时必须优先选仍可用的旧 SDK。
+  if [[ "${DEVELOPER_DIR:-}" == "$CLT_ROOT" ]]; then
+    for candidate in MacOSX26.5 MacOSX26 MacOSX15.4 MacOSX14.4; do
+      if [[ -d "$CLT_ROOT/SDKs/$candidate.sdk" ]]; then
+        SDKROOT="$CLT_ROOT/SDKs/$candidate.sdk"
+        break
+      fi
+    done
+  fi
+  if [[ -z "${SDKROOT:-}" ]]; then
+    SDKROOT="$(DEVELOPER_DIR="$DEVELOPER_DIR" xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+  fi
+fi
+if [[ -z "${SDKROOT:-}" || ! -d "$SDKROOT" ]]; then
+  echo "错误：未能找到与当前 Swift 编译器匹配的 macOS SDK" >&2
+  exit 1
+fi
 export DEVELOPER_DIR SDKROOT
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${TMPDIR:-/tmp}/datacopier-clang-module-cache}"
 
 echo "==> 编译自检程序"
+echo "    DEVELOPER_DIR = ${DEVELOPER_DIR:-<系统默认>}"
+echo "    SDKROOT = $SDKROOT"
 mkdir -p "$OUT"
 
 SOURCES=(

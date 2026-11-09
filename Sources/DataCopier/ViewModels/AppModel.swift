@@ -15,6 +15,10 @@ final class AppModel: ObservableObject {
     @Published var pendingUSBSource: String?
     /// USB 唤起时给新建任务表单顶部展示的说明（设备类型 + 卷名）。
     @Published var pendingUSBHint: String?
+    /// 当前正在后台复核清单的任务。大目录会重算全部哈希，界面继续保持可交互。
+    @Published private(set) var verifyingTaskID: UUID?
+    /// 当前正在后台生成导出报告的标记。
+    @Published private(set) var isExportingReport = false
     /// 是否在插入 USB 移动设备时自动弹出拷贝任务（设置页可开关）。
     @Published var usbDetectEnabled: Bool =
         UserDefaults.standard.object(forKey: AppModel.usbDetectKey) as? Bool ?? true {
@@ -94,14 +98,38 @@ final class AppModel: ObservableObject {
         let ejectable = values?.volumeIsEjectable ?? false
         guard removable || ejectable else { return }
 
+        // 挂载通知也会覆盖 DMG。hdiutil 是同步子进程，必须放到后台查询，
+        // 否则磁盘映像较多或系统繁忙时会卡住主线程及其动画。
+        let path = url.path
+        Task { @MainActor [weak self] in
+            let isDiskImage = await Task.detached(priority: .userInitiated) {
+                USBDeviceScanner.isDiskImageVolume(at: path)
+            }.value
+            guard let self, self.usbDetectEnabled, !isDiskImage else { return }
+            self.presentMountedUSBVolume(url: url)
+        }
+    }
+
+    /// 在后台完成 DMG 排除后，回到主线程展示卷信息和新建任务表单。
+    private func presentMountedUSBVolume(url: URL) {
+
         pendingUSBSource = url.path
         let volumeName = (url.path as NSString).lastPathComponent
         let capacity = Int64((try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?
             .volumeTotalCapacity ?? 0)
         let kind = USBDevice.kind(volumeName: volumeName, totalCapacity: capacity)
         pendingUSBHint = "检测到\(kind)「\(volumeName)」已连接，已自动预填来源，选择目标文件夹即可开始拷贝"
-        showNewTaskSheet = true
         MenuBarController.showMainWindow()
+        // 设置页只在「完成」时保存。此时切换 sheet 会静默丢弃正在编辑的内容；
+        // 保留预填信息，等用户关闭设置后主动新建任务时再消费。
+        guard !showSettings else {
+            banner = BannerMessage(
+                kind: .info,
+                text: "检测到\(kind)「\(volumeName)」",
+                caption: "已记录来源；关闭设置后新建任务即可自动带入")
+            return
+        }
+        showNewTaskSheet = true
         banner = BannerMessage(kind: .info,
                                text: "检测到\(kind)「\(volumeName)」",
                                caption: "已自动打开新建拷贝任务并预填来源")
@@ -174,14 +202,33 @@ final class AppModel: ObservableObject {
     }
 
     func remove(_ id: UUID) {
-        guard runners[id] == nil else {
-            banner = BannerMessage(kind: .warning, text: "任务正在运行，请先停止后再删除")
+        remove(Set([id]))
+    }
+
+    /// 批量删除只改一次任务集合和选择状态，避免逐个删除时选择同步
+    /// 把多选集合收缩成一项，进而只删掉其中第一个任务。
+    func remove(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+
+        let deletableIDs = ids.filter { runners[$0] == nil }
+        guard !deletableIDs.isEmpty else {
+            banner = BannerMessage(kind: .warning, text: "所选任务正在运行，请先停止后再删除")
             return
         }
-        tasks.removeAll { $0.id == id }
-        progress[id] = nil
-        if selection == id { selection = tasks.first?.id }
+
+        let selectionWasDeleted = selection.map(deletableIDs.contains) ?? false
+        tasks.removeAll { deletableIDs.contains($0.id) }
+        for id in deletableIDs {
+            progress[id] = nil
+        }
+        if selectionWasDeleted {
+            selection = tasks.first?.id
+        }
         save()
+
+        if deletableIDs.count < ids.count {
+            banner = BannerMessage(kind: .warning, text: "已删除可移除的任务，运行中的任务需要先停止")
+        }
     }
 
     func duplicate(_ id: UUID) {
@@ -330,15 +377,26 @@ final class AppModel: ObservableObject {
             banner = BannerMessage(kind: .warning, text: "该任务还没有可导出的报告")
             return
         }
+        guard !isExportingReport else {
+            banner = BannerMessage(kind: .info, text: "正在生成另一份报告，请稍候")
+            return
+        }
         let suggested = ReportExporter.suggestedFileName(for: report, format: format)
         guard let url = FilePanels.saveReport(suggestedName: suggested, fileExtension: format.fileExtension) else {
             return
         }
-        do {
-            try ReportExporter.write(report, format: format, to: url)
-            banner = BannerMessage(kind: .success, text: "报告已导出到 \(url.lastPathComponent)")
-        } catch {
-            banner = BannerMessage(kind: .error, text: "导出失败：\(error.localizedDescription)")
+        isExportingReport = true
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try ReportExporter.write(report, format: format, to: url)
+                }.value
+                isExportingReport = false
+                banner = BannerMessage(kind: .success, text: "报告已导出到 \(url.lastPathComponent)")
+            } catch {
+                isExportingReport = false
+                banner = BannerMessage(kind: .error, text: "导出失败：\(error.localizedDescription)")
+            }
         }
     }
 
@@ -365,6 +423,10 @@ final class AppModel: ObservableObject {
     /// 用既有清单复核目标目录。
     func verifyAgainstManifest(for id: UUID) {
         guard let task = task(id: id) else { return }
+        guard verifyingTaskID == nil else {
+            banner = BannerMessage(kind: .info, text: "已有清单复核正在进行，请稍候")
+            return
+        }
         let algorithm = task.options.algorithm == .none ? CheckAlgorithm.sha256 : task.options.algorithm
         guard let manifestPath = FilePanels.chooseManifest() else { return }
 
@@ -375,16 +437,22 @@ final class AppModel: ObservableObject {
                 return
             }
             let cancellation = Cancellation()
-            let mismatches = Verifier.verifyManifest(manifest,
-                                                     destinationRoot: task.destination,
-                                                     algorithm: algorithm,
-                                                     cancellation: cancellation)
-            if mismatches.isEmpty {
-                banner = BannerMessage(kind: .success, text: "清单比对通过：\(manifest.count) 个文件全部一致")
-            } else {
-                let preview = mismatches.prefix(3).map(\.path).joined(separator: "、")
-                banner = BannerMessage(kind: .error,
-                                       text: "清单比对发现 \(mismatches.count) 处不一致：\(preview)")
+            verifyingTaskID = id
+            Task {
+                let mismatches = await Task.detached(priority: .userInitiated) {
+                    Verifier.verifyManifest(manifest,
+                                            destinationRoot: task.destination,
+                                            algorithm: algorithm,
+                                            cancellation: cancellation)
+                }.value
+                verifyingTaskID = nil
+                if mismatches.isEmpty {
+                    banner = BannerMessage(kind: .success, text: "清单比对通过：\(manifest.count) 个文件全部一致")
+                } else {
+                    let preview = mismatches.prefix(3).map(\.path).joined(separator: "、")
+                    banner = BannerMessage(kind: .error,
+                                           text: "清单比对发现 \(mismatches.count) 处不一致：\(preview)")
+                }
             }
         } catch {
             banner = BannerMessage(kind: .error, text: "读取清单失败：\(error.localizedDescription)")

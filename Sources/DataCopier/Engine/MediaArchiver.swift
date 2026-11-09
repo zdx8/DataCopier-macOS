@@ -119,7 +119,11 @@ enum MediaArchiver {
             value = value.replacingOccurrences(of: bad, with: "-")
         }
         value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty { value = "未命名" }
+        // `.` / `..` 不是可用路径段：前者会被规范化为当前目录，后者会
+        // 逃逸到上一级目录。用户输入必须在进入路径拼接前被替换。
+        if value.isEmpty || value == "." || value == ".." {
+            value = "未命名"
+        }
 
         if value.utf8.count > 180 {
             var trimmed = ""

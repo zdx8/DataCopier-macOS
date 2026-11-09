@@ -14,3 +14,14 @@ dist/
 # 日志与临时文件
 *.log
 *.tmp
+
+# 设计素材与生成图（不随源码分发）
+generated-images/
+processed_image_*.png
+
+# 项目本地记忆与本机路径（可能含个人信息）
+.workbuddy/
+
+# 分析/审查报告含本机绝对路径，按需本地保留
+项目分析报告-*.md
+代码审查报告-*.md

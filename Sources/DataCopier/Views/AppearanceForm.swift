@@ -72,18 +72,26 @@ struct AppearanceForm: View {
     @AppStorage(AppearanceMode.storageKey) private var raw: String = AppearanceMode.system.rawValue
 
     var body: some View {
-        Section("外观") {
-            Picker("界面主题", selection: $raw) {
-                ForEach(AppearanceMode.allCases) { mode in
-                    Label(mode.displayName, systemImage: mode.symbol).tag(mode.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
+        BenchoSection(title: "外观") {
+            BenchoSegmented(options: AppearanceMode.allCases,
+                            title: { $0.displayName },
+                            selection: modeBinding)
 
             Text("「跟随系统」会随 macOS 的外观设置自动切换；浅色与深色为固定外观，便于在稳定光照下比对素材。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// 选中即生效：写入偏好并当场切换全部窗口的外观。
+    private var modeBinding: Binding<AppearanceMode> {
+        Binding(
+            get: { AppearanceMode(rawValue: raw) ?? .system },
+            set: { mode in
+                raw = mode.rawValue
+                AppearanceMode.apply(mode)
+            }
+        )
     }
 }

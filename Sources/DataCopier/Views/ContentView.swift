@@ -6,7 +6,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             TaskListView()
-                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 380)
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
         } detail: {
             Group {
                 if let task = model.selectedTask {
@@ -20,38 +20,6 @@ struct ContentView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 620, ideal: 780)
-        }
-        // 工具栏按钮统一右对齐：新建任务（放大主按钮）+ 停止全部（多任务运行时）。
-        // 声明在根层，与详情列的导出/设置合并到窗口工具栏最右端。
-        .toolbar {
-            if model.runningCount > 1 {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.cancelAll()
-                    } label: {
-                        Image(systemName: "stop.circle")
-                    }
-                    .help("停止全部任务")
-                }
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.showNewTaskSheet = true
-                } label: {
-                    Label("新建任务", systemImage: "plus")
-                        .labelStyle(.titleAndIcon)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.blue)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        // 显式绘制浅蓝底 + 深蓝字，不依赖系统 tint。
-                        .background(RoundedRectangle(cornerRadius: 7)
-                            .fill(Color.blue.opacity(0.16)))
-                }
-                .buttonStyle(.plain)
-                .help("新建任务")
-            }
         }
         // 提示浮在右上角：避开工具栏与会挡视区，配合自动消失避免长期遮挡。
         .overlay(alignment: .topTrailing) {
@@ -78,6 +46,12 @@ struct ContentView: View {
                     .environmentObject(model)
             }
         }
+        // 底色必须画到标题栏安全区里：否则顶栏露出的是窗口自身的背衬（深色实测 #0D0E0E），
+        // 与内容区的 #000000 差一档，看起来像多了一条顶栏。
+        .background(Bencho.bg.ignoresSafeArea())
+        // 隐藏系统工具栏底衬：macOS 26 起窗口工具栏会叠一层约 5% 的浅色玻璃，
+        // 深色下能把纯黑顶成 #0D0E0E，浅色下也会与纸面差一档，看起来像多了一条顶栏。
+        .toolbarBackground(.hidden, for: .windowToolbar)
     }
 
     /// 当前应呈现的模态表单。

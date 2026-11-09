@@ -15,12 +15,13 @@ struct TranscodeForm: View {
     @State private var ffmpegPath: String?
     @State private var ffmpegVersion: String?
     @State private var probeFinished = false
+    @State private var confirmsSourceDeletion = false
 
     private var ffmpegReady: Bool { ffmpegPath != nil }
     private var preset: TranscodePreset { settings.preset }
 
     var body: some View {
-        Section(standalone ? "转码设置" : "视频转码（拷贝完成后）") {
+        BenchoSection(title: standalone ? "转码设置" : "视频转码（拷贝完成后）") {
             if !standalone {
                 Toggle("启用拷贝后转码", isOn: $settings.enabled)
                     .disabled(!ffmpegReady)
@@ -56,15 +57,15 @@ struct TranscodeForm: View {
     private var availabilityRow: some View {
         if !probeFinished {
             Text("正在检测 FFmpeg…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
         } else if let ffmpegPath {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal.fill")
-                    .foregroundStyle(Color.green)
+                    .foregroundStyle(Bencho.ok)
                 Text("FFmpeg \(ffmpegVersion ?? "")　\(ffmpegPath)")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(ffmpegPath)
@@ -72,10 +73,10 @@ struct TranscodeForm: View {
         } else {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(Bencho.warn)
                 Text("未检测到 FFmpeg，转码不可用。可在「设置」中手动指定其路径。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -97,32 +98,32 @@ struct TranscodeForm: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Image(systemName: preset.symbol)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
                 Text(preset.name)
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: 11.5, weight: .medium))
                 if hardwareBadge {
                     Text("硬件加速")
-                        .font(.caption2.weight(.medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.green.opacity(0.16), in: Capsule())
-                        .foregroundStyle(Color.green)
+                        .background(Bencho.wash, in: Capsule())
+                        .foregroundStyle(Bencho.ok)
                 }
             }
 
             Text(preset.summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(preset.detailLine)
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .font(Bencho.Typeface.mono(10.5))
+                .foregroundStyle(Bencho.ink5)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .background(Bencho.fillSlab, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
@@ -156,7 +157,7 @@ struct TranscodeForm: View {
                 Text("目标码率")
                 Slider(value: $settings.custom.videoBitRateMbps, in: 1...40, step: 0.5)
                 Text(String(format: "%.1f Mbps", settings.custom.videoBitRateMbps))
-                    .font(.system(.caption, design: .monospaced))
+                    .font(Bencho.Typeface.mono(11))
                     .frame(width: 92, alignment: .trailing)
             }
         }
@@ -175,8 +176,8 @@ struct TranscodeForm: View {
 
         if settings.custom.videoCodec == .prores && !settings.custom.container.supportsProRes {
             Text("ProRes 无法写入 \(settings.custom.container.displayName)，执行时会自动改用 MOV。")
-                .font(.caption)
-                .foregroundStyle(.orange)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.warn)
         }
     }
 
@@ -201,32 +202,52 @@ struct TranscodeForm: View {
 
             Toggle("转码结果未变小时保留原文件", isOn: $settings.discardOutputIfLarger)
 
-            Toggle("转码成功后删除原始拷贝", isOn: $settings.removeSourceAfterSuccess)
-                .foregroundStyle(settings.removeSourceAfterSuccess ? Color.red : Color.primary)
+            Toggle(standalone ? "转码成功后删除源文件" : "转码成功后删除原始拷贝",
+                   isOn: Binding(
+                    get: { settings.removeSourceAfterSuccess },
+                    set: { enabled in
+                        if enabled, !settings.removeSourceAfterSuccess {
+                            confirmsSourceDeletion = true
+                        } else {
+                            settings.removeSourceAfterSuccess = enabled
+                        }
+                    }
+                   ))
+                .foregroundStyle(settings.removeSourceAfterSuccess ? Bencho.danger : Bencho.fillOn)
 
             if standalone {
                 Text("转码输出统一写入任务的目标文件夹，文件名带预设后缀，因此默认不会覆盖已有文件。转码并发数建议保持 1–2：多个编码进程会互相抢占硬件编码器与内存带宽。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
 
                 if settings.removeSourceAfterSuccess {
                     Text("注意：删除的是来源中的原始视频文件，删除后无法恢复。仅在转码成功且输出可读时才执行。")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.warn)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text("转码输出与拷贝结果同目录，文件名带预设后缀，因此默认不会覆盖原始素材。转码并发数建议保持 1–2：多个编码进程会互相抢占硬件编码器与内存带宽。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.meta(11))
+                    .foregroundStyle(Bencho.ink4)
 
                 if settings.removeSourceAfterSuccess {
                     Text("注意：删除的是拷贝到目标位置的那一份（源文件不受影响）。仅在转码成功且输出可读时才执行。")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.warn)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .alert("启用后会自动删除文件", isPresented: $confirmsSourceDeletion) {
+            Button("取消", role: .cancel) {}
+            Button("启用自动删除", role: .destructive) {
+                settings.removeSourceAfterSuccess = true
+            }
+        } message: {
+            Text(standalone
+                 ? "每个视频转码成功且输出可读后，来源中的原视频会被删除。此操作无法撤销。"
+                 : "每个视频转码成功且输出可读后，目标目录中的原始拷贝会被删除；来源文件不受影响。此操作无法撤销。")
         }
     }
 }

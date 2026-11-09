@@ -288,6 +288,10 @@ enum FilePlanner {
         let fm = FileManager.default
         let excluded = Set(task.options.excludedNames)
         var entries: [SourceEntry] = []
+        // 同一文件可能因同时选择父目录、子目录或文件本身而被枚举多次。
+        // 按解析符号链接后的真实路径去重，避免规划出两个目标并重复搬运。
+        // 符号链接保留各自路径，满足「按链接拷贝」时重建多个链接的需求。
+        var seenSourcePaths = Set<String>()
 
         // 同名来源根（例如两张相机卡都叫 DCIM 或 Photos）若都用原名，
         // 「文件拷贝」下算出的相对路径会彼此撞车，后加入的来源会被静默丢弃。
@@ -332,6 +336,10 @@ enum FilePlanner {
 
                     let isLink = childValues.isSymbolicLink == true
                     if isLink && !task.options.copySymlinksAsLinks { continue }
+                    if !isLink {
+                        let canonicalPath = normalize(url.path)
+                        guard seenSourcePaths.insert(canonicalPath).inserted else { continue }
+                    }
 
                     entries.append(SourceEntry(
                         sourcePath: url.path,
@@ -350,6 +358,10 @@ enum FilePlanner {
 
                 let isLink = rootValues.isSymbolicLink == true
                 if isLink && !task.options.copySymlinksAsLinks { continue }
+                if !isLink {
+                    let canonicalPath = normalize(sourcePath)
+                    guard seenSourcePaths.insert(canonicalPath).inserted else { continue }
+                }
 
                 entries.append(SourceEntry(
                     sourcePath: sourcePath,

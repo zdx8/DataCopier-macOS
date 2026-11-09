@@ -18,29 +18,29 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("设置")
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .semibold))
                 Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            Divider()
+            Rectangle().fill(Bencho.hairline).frame(height: 1)
 
-            Form {
-                Section("通用") {
+            BenchoForm {
+                BenchoSection(title: "通用") {
                     Picker("点击关闭按钮时", selection: $closeActionRaw) {
                         Text("退出软件").tag(CloseAction.quit.rawValue)
                         Text("最小化到任务栏（常驻菜单栏）").tag(CloseAction.minimize.rawValue)
                     }
                     Text(closeActionHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Toggle("检测 USB 移动设备", isOn: $model.usbDetectEnabled)
                     Text("开启后，插入相机卡、U 盘等移动设备时会自动唤起软件并新建拷贝任务，来源预填为该设备。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(Bencho.Typeface.meta(11))
+                        .foregroundStyle(Bencho.ink4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -62,14 +62,13 @@ struct SettingsView: View {
                     set: { model.defaultOptions.transcodeSettings = $0 }
                 ))
 
-                Section("运行环境") {
+                BenchoSection(title: "运行环境") {
                     hardwareRow
                     ffmpegRow
                 }
             }
-            .formStyle(.grouped)
 
-            Divider()
+            Rectangle().fill(Bencho.hairline).frame(height: 1)
 
             HStack {
                 Spacer()
@@ -82,6 +81,7 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .background(Bencho.bg)
         .frame(width: 720, height: 780)
         .task { await refresh() }
     }
@@ -98,23 +98,23 @@ struct SettingsView: View {
     private var hardwareRow: some View {
         if encoders.isEmpty {
             Text("正在探测本机视频编码器…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
         } else {
             let hardware = encoders.filter { $0.isHardwareAccelerated }
             HStack(spacing: 6) {
                 Image(systemName: hardware.isEmpty ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
-                    .foregroundStyle(hardware.isEmpty ? Color.orange : Color.green)
+                    .foregroundStyle(hardware.isEmpty ? Bencho.warn : Bencho.ok)
                 Text(hardware.isEmpty
                      ? "VideoToolbox 未报告硬件编码器，转码将回退到软件编码"
                      : "VideoToolbox 硬件编码器：\(hardware.count) 个")
-                    .font(.callout)
+                    .font(Bencho.Typeface.body(13))
             }
 
             ForEach(hardware.prefix(5)) { encoder in
                 Text("· \(encoder.name)　\(encoder.codec.isEmpty ? "—" : encoder.codec)")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
                     .lineLimit(1)
             }
         }
@@ -126,9 +126,9 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: detected ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(detected ? Color.green : Color.orange)
+                    .foregroundStyle(detected ? Bencho.ok : Bencho.warn)
                 Text(statusText)
-                    .font(.callout)
+                    .font(Bencho.Typeface.body(13))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
@@ -136,8 +136,8 @@ struct SettingsView: View {
 
             if let ffmpegPath, detected {
                 Text(ffmpegPath)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(Bencho.Typeface.mono(11))
+                    .foregroundStyle(Bencho.ink4)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
@@ -164,8 +164,8 @@ struct SettingsView: View {
             }
 
             Text("FFmpeg 提供硬件与软件编码器、滤镜与格式支持。应用优先使用随包分发或系统路径中的版本；若装在别处可在此手动指定。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Bencho.Typeface.meta(11))
+                .foregroundStyle(Bencho.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

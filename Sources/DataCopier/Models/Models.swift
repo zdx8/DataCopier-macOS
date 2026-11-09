@@ -497,8 +497,9 @@ struct MediaImportSettings: Codable, Hashable, Sendable {
         if trimmed.isEmpty {
             return kind == .photo ? "Photos" : "Videos"
         }
-        // 路径分隔符会破坏层级意图，统一替换掉。
-        return trimmed.replacingOccurrences(of: "/", with: "-")
+        // 与文件名、设备名使用同一套净化规则，避免分隔符或 `..`
+        // 把归档产物写出目标目录。
+        return MediaArchiver.sanitize(trimmed)
     }
 
     /// 设备型号对应的归档目录名。

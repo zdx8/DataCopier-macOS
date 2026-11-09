@@ -283,9 +283,12 @@ struct TranscodePlan {
     }
 
     /// 解析出实际可执行的方案。
-    static func resolve(settings: TranscodeSettings, ffmpeg: URL) throws -> TranscodePlan {
+    static func resolve(settings: TranscodeSettings,
+                        ffmpeg: URL,
+                        preferHardware: Bool? = nil) throws -> TranscodePlan {
         let preset = settings.preset
         let available = FFmpegCapability.encoders(of: ffmpeg)
+        let hardwarePreferred = preferHardware ?? settings.preferHardwareAcceleration
 
         if preset.videoCodec == .prores && !preset.container.supportsProRes {
             throw TranscodeError.incompatibleContainer("ProRes", preset.container.displayName)
@@ -298,7 +301,7 @@ struct TranscodePlan {
             let hardware = preset.videoCodec.hardwareEncoder
             let software = preset.videoCodec.softwareEncoder
 
-            if settings.preferHardwareAcceleration, let hardware, available.contains(hardware) {
+            if hardwarePreferred, let hardware, available.contains(hardware) {
                 videoEncoder = hardware
                 usesHardware = true
             } else if let software, available.contains(software) {
@@ -430,7 +433,7 @@ enum TranscodeEngine {
             return outcome
         }
 
-        let plan: TranscodePlan
+        var plan: TranscodePlan
         do {
             plan = try TranscodePlan.resolve(settings: settings, ffmpeg: ffmpeg)
         } catch {
@@ -494,7 +497,8 @@ enum TranscodeEngine {
 
         let startedAt = Date()
         var usedFallback = false
-        var diagnostics = ""
+        var usedSoftwareVideoFallback = false
+        var failureDetails: [String] = []
 
         do {
             var result = try FFmpegRunner.run(
@@ -505,13 +509,44 @@ enum TranscodeEngine {
                 onProgress: progress
             )
 
+            // FFmpeg 的编码器列表只说明编码器被编译/注册，不代表当前机器的
+            // VideoToolbox 会话一定能创建。硬件首次执行失败时改用软件编码器重试一次，
+            // 避免整个批量转码因一个不可用的硬件通路而全部失败。
+            if result.code != 0, plan.usesHardware, !cancellation.isCancelled {
+                try? fm.removeItem(atPath: outputURL.path)
+                do {
+                    let softwarePlan = try TranscodePlan.resolve(
+                        settings: settings,
+                        ffmpeg: ffmpeg,
+                        preferHardware: false
+                    )
+                    failureDetails.append("硬件编码失败：\(condense(result.diagnostics))")
+                    plan = softwarePlan
+                    usedSoftwareVideoFallback = true
+                    result = try FFmpegRunner.run(
+                        executable: ffmpeg,
+                        arguments: plan.arguments(input: inputURL, output: outputURL),
+                        expectedDuration: info?.duration,
+                        cancellation: cancellation,
+                        onProgress: progress
+                    )
+                } catch is OperationCancelled {
+                    throw OperationCancelled()
+                } catch let error as FFmpegRunner.RunnerError {
+                    if case .cancelled = error { throw error }
+                    failureDetails.append("软件编码器回退失败：\(error.localizedDescription)")
+                } catch {
+                    failureDetails.append("软件编码器回退失败：\(error.localizedDescription)")
+                }
+            }
+
             // 码流直通最常见的中断原因是原始音轨无法封装进目标容器
             // （例如 MOV 里的 PCM 音轨写不进 MP4）。此时只重编音轨再试一次，
             // 视频码流仍然直通，既解决问题又不引入画质损失。
             if result.code != 0, plan.isVideoCopy, !plan.preset.isAudioOnly, plan.audioMode == .copy {
                 try? fm.removeItem(atPath: outputURL.path)
                 usedFallback = true
-                diagnostics = result.diagnostics
+                failureDetails.append("音轨直通失败：\(condense(result.diagnostics))")
                 result = try FFmpegRunner.run(
                     executable: ffmpeg,
                     arguments: plan.arguments(input: inputURL, output: outputURL, forceAudioReencode: true),
@@ -527,7 +562,11 @@ enum TranscodeEngine {
             guard result.code == 0 else {
                 try? fm.removeItem(atPath: outputURL.path)
                 outcome.status = .failed
-                outcome.message = "FFmpeg 退出码 \(result.code)：\(condense(result.diagnostics))"
+                var message = "FFmpeg 退出码 \(result.code)：\(condense(result.diagnostics))"
+                if !failureDetails.isEmpty {
+                    message += "；" + failureDetails.joined(separator: "；")
+                }
+                outcome.message = message
                 return outcome
             }
         } catch is OperationCancelled {
@@ -547,8 +586,8 @@ enum TranscodeEngine {
             try? fm.removeItem(atPath: outputURL.path)
             outcome.status = .failed
             var text = error.localizedDescription
-            if usedFallback, !diagnostics.isEmpty {
-                text += "；首次尝试：\(condense(diagnostics))"
+            if !failureDetails.isEmpty {
+                text += "；" + failureDetails.joined(separator: "；")
             }
             outcome.message = text
             return outcome
@@ -618,8 +657,15 @@ enum TranscodeEngine {
             }
         }
 
+        var notes: [String] = []
+        if usedSoftwareVideoFallback {
+            notes.append("硬件编码器不可用，已自动改用软件编码")
+        }
         if usedFallback {
-            let note = "原音轨无法封装进 \(plan.container.displayName)，已改为重新编码音轨（视频仍为直通）"
+            notes.append("原音轨无法封装进 \(plan.container.displayName)，已改为重新编码音轨（视频仍为直通）")
+        }
+        if !notes.isEmpty {
+            let note = notes.joined(separator: "；")
             outcome.message = outcome.message.map { "\($0)；\(note)" } ?? note
         }
 

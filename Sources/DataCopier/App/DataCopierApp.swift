@@ -31,10 +31,9 @@ struct DataCopierApp: App {
                 // 菜单栏图标的「新建拷贝任务」走通知进来：AppDelegate 不持有
                 // model，跨层用通知解耦，避免把状态对象塞进单例。
                 .onReceive(NotificationCenter.default.publisher(for: .dataCopierNewTask)) { _ in
-                    model.showNewTaskSheet = true
                 }
         }
-        .windowToolbarStyle(.unified)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新建拷贝任务") { model.showNewTaskSheet = true }

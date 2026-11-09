@@ -6,11 +6,9 @@
 #   第 2 个参数为架构：默认 native（当前机器）；universal 用 lipo 合并
 #   arm64 与 x86_64 为通用二进制，可同时运行于 Apple Silicon 与 Intel Mac。
 #
-# 关于工具链：本机仅安装了 Command Line Tools 且未接受 Xcode 许可协议，
-# 因此显式指定 DEVELOPER_DIR，避免 xcrun 因许可检查而拒绝工作。
-# 关于 SDK：CLT 默认使用 MacOSX27.x，该 SDK 中 SwiftUI 的 @State 已改为外部宏，
-# 而对应宏插件不在 CLT 工具链内（属于 Xcode 27 范畴），会导致 SwiftUI 代码编译失败。
-# 因此优先选用 MacOSX26.5 SDK。
+# 关于工具链：较新的 macOS SDK 把 SwiftUI @State 改成了外部宏。该宏插件随
+# Xcode 的 MacOSX platform 分发，Command Line Tools 中并不存在。若已安装
+# Xcode，则优先使用其 Developer 目录；没有 Xcode 时再回退到 CLT。
 #
 set -euo pipefail
 
@@ -20,7 +18,7 @@ ARCH="${2:-native}"
 APP_NAME="DataCopier"
 BUNDLE_ID="com.genge.datacopier"
 # 应用版本号：Info.plist 与 DMG 文件名共用此值，发版时只改这一处。
-APP_VERSION="1.0.1"
+APP_VERSION="1.1.0"
 
 # swift build 的架构参数；native 表示不显式传 --arch。
 BUILD_ARGS=()
@@ -28,20 +26,44 @@ if [[ "$ARCH" != "native" && "$ARCH" != "universal" ]]; then
   BUILD_ARGS+=(--arch "$ARCH")
 fi
 
+XCODE_ROOT="$(xcode-select -p 2>/dev/null || true)"
 CLT_ROOT="/Library/Developer/CommandLineTools"
+SWIFTUI_MACROS="$XCODE_ROOT/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
 
-if [[ -z "${DEVELOPER_DIR:-}" && -d "$CLT_ROOT" ]]; then
-  export DEVELOPER_DIR="$CLT_ROOT"
+if [[ -z "${DEVELOPER_DIR:-}" ]]; then
+  if [[ -n "$XCODE_ROOT" && -f "$SWIFTUI_MACROS" ]]; then
+    export DEVELOPER_DIR="$XCODE_ROOT"
+  elif [[ -d "$CLT_ROOT" ]]; then
+    export DEVELOPER_DIR="$CLT_ROOT"
+  fi
 fi
 
 if [[ -z "${SDKROOT:-}" ]]; then
-  for candidate in MacOSX26.5 MacOSX26 MacOSX15.4 MacOSX14.4; do
-    if [[ -d "${DEVELOPER_DIR:-}/SDKs/$candidate.sdk" ]]; then
-      export SDKROOT="${DEVELOPER_DIR}/SDKs/$candidate.sdk"
-      break
-    fi
-  done
+  # 回退到 CLT 时不能直接取 xcrun 的默认 SDK：CLT 的 MacOSX.sdk 指向 27.x，
+  # 而 27.x 的 SwiftUI @State 已改为外部宏、宏插件又不在 CLT 里，必然编译失败。
+  # 因此先在 CLT 内找仍可用的旧 SDK，找不到才退回默认值。
+  if [[ "${DEVELOPER_DIR:-}" == "$CLT_ROOT" ]]; then
+    for candidate in MacOSX26.5 MacOSX26 MacOSX15.4 MacOSX14.4; do
+      if [[ -d "$CLT_ROOT/SDKs/$candidate.sdk" ]]; then
+        SDKROOT="$CLT_ROOT/SDKs/$candidate.sdk"
+        break
+      fi
+    done
+  fi
+  # 使用 Xcode 或 CLT 无旧 SDK 时，以当前工具链实际选择的 SDK 为准。
+  if [[ -z "${SDKROOT:-}" ]]; then
+    SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+  fi
+  if [[ -n "$SDKROOT" ]]; then
+    export SDKROOT
+  fi
 fi
+if [[ -z "${SDKROOT:-}" || ! -d "$SDKROOT" ]]; then
+  echo "错误：未能找到可用的 macOS SDK" >&2
+  exit 1
+fi
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/.build/ClangModuleCache}"
+export SWIFT_MODULECACHE_PATH="${SWIFT_MODULECACHE_PATH:-$ROOT/.build/ModuleCache}"
 
 echo "==> 工具链"
 echo "    DEVELOPER_DIR = ${DEVELOPER_DIR:-<系统默认>}"
@@ -119,11 +141,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "==> 临时签名"
-if codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1; then
-  echo "    已使用临时签名"
-else
-  echo "    提示：临时签名失败，首次打开可能需要在「系统设置 → 隐私与安全性」中放行。"
+if ! codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1; then
+  echo "错误：临时签名失败，未生成可交付的应用包" >&2
+  exit 1
 fi
+echo "    已使用临时签名"
 
 cat > "$APP_DIR/Contents/Resources/README.txt" <<'TXT'
 数据拷贝 DataCopier
