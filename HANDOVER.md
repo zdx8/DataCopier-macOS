@@ -20,7 +20,9 @@ DataCopier（显示名「数据拷贝」）是一个面向「大批量、有校�
 
 远程：GitHub `zdx8/DataCopier-macOS`（公开）；另有私有镜像，地址不入库。
 
-**发布状态**：v1.1.0 **尚未发布**。README 与 `website/index.html` 已指向 v1.1.0 的 Release 链接，推送前必须先建 tag 与 Release，否则下载链接 404。
+**发布状态**：v1.1.0 已于 2026-11-09 发布 → <https://github.com/zdx8/DataCopier-macOS/releases/tag/v1.1.0>。
+tag `v1.1.0` 指向提交 `3421d35`；两个 DMG 已上传并回下载校验（SHA-256 与本地一致）；官网 `https://zdx8.github.io/DataCopier-macOS/` 已切到 v1.1.0（Pages `built`）。
+发布前已做脱敏：远端历史为单一 `zdx8` noreply 提交，仓库内无本机路径、姓名、邮箱、内网地址；`dist/` 下的历史安装包已停止跟踪。
 
 ## 3. 怎么跑起来
 
